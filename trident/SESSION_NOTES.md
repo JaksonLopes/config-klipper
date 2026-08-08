@@ -3,6 +3,10 @@
 > Documento de contexto para futuras sessões. Resume o que foi diagnosticado e corrigido,
 > o que ficou pendente, e armadilhas conhecidas desse setup específico.
 > Última atualização: sessão de 2026-08-02.
+>
+> Ver também [`CLAUDE.md`](../CLAUDE.md) na raiz do repositório: idioma padrão
+> (sempre português) e cuidados gerais válidos pra qualquer impressora deste Pi
+> multi-instância (nomes de serviço, backup automático, symlinks, etc.).
 
 ## Visão geral do hardware
 
