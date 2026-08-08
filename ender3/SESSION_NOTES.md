@@ -79,6 +79,30 @@ categoria do que já tinha acontecido com a pasta `mmu-<timestamp>/` da Trident)
       `shaper_freq_y = 36.0` bem mais baixo que o X (74.8) — não é bug, só uma
       oportunidade de melhoria mecânica.
 
+## Armadilha conhecida: lista de gcodes sumindo da interface
+
+Depois dos reinícios seguidos de Klipper/Moonraker na sessão de ajustes de 2026-08-08
+(vários `SAVE_CONFIG` em sequência), a lista de arquivos gcode na interface (Mainsail)
+passou a mostrar só os arquivos enviados depois dos restarts — os antigos (confirmados
+presentes em `/home/biqu/printer_Ender3_data/gcodes` via `ls`) sumiram da tela, mesmo com
+upload de arquivo novo funcionando normalmente (log do Moonraker sem erro, `201` no
+`POST /api/files/local`).
+
+- **Causa provável:** o Moonraker faz um escaneamento completo da pasta `gcodes` (com
+  extração de metadata de cada gcode) sempre que o serviço reinicia. Com vários restarts
+  em sequência rápida, esse escaneamento parece ter sido interrompido no meio (talvez por
+  algum arquivo com nome "difícil" — há vários com colchetes, parênteses e espaços) e a
+  lista ficou incompleta. Arquivos novos continuaram aparecendo porque são adicionados de
+  forma incremental (watch do sistema de arquivos), sem precisar do escaneamento
+  completo.
+- **Correção que funcionou:** `sudo systemctl restart moonraker-Ender3` — o
+  reescaneamento completou direito na tentativa seguinte e a lista toda voltou.
+- **Se acontecer de novo:** tentar o restart do Moonraker primeiro. Se não resolver, olhar
+  o log (`/home/biqu/printer_Ender3_data/logs/moonraker.log`) procurando erro/exception
+  logo depois de alguma linha `Updating File List <gcodes>...`, pra identificar se é um
+  arquivo específico travando o escaneamento (nesse caso, renomear esse arquivo removendo
+  caracteres especiais costuma resolver).
+
 ## Dicas úteis pra próxima sessão
 
 - Sempre `git pull --rebase origin main` antes de editar (cron de backup pode ter
