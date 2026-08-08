@@ -13,7 +13,8 @@ hospedadas no mesmo BTT Pi (setup multi-instância):
 
 - `trident/` — Voron Trident com MMU MMX (Happy Hare). Histórico detalhado de
   diagnósticos/correções em [`trident/SESSION_NOTES.md`](trident/SESSION_NOTES.md).
-- `ender3/` — Ender 3 (placa FLY_D5). Ainda sem sessão de trabalho registrada.
+- `ender3/` — Ender 3 (placa FLY_D5). Histórico em
+  [`ender3/SESSION_NOTES.md`](ender3/SESSION_NOTES.md).
 - `outra/` — outra impressora no mesmo Pi (config ainda mínima/pouco explorada).
 
 **Sempre que uma sessão de trabalho substancial for feita numa impressora**, criar ou
@@ -47,3 +48,11 @@ cada uma tem hardware e problemas próprios.
   aqui, checar se o conteúdo faz sentido como config de verdade — se for só uma linha
   com um caminho, é um symlink, e a edição de verdade precisa ser feita direto no Pi (ou
   no projeto de onde o link aponta, como o Happy-Hare).
+
+## Push para o git
+
+Quando o usuário pedir pra "subir os ajustes", "enviar pro git", "mandar pro repositório"
+ou equivalente, pode **commitar e dar `git push` direto**, sem pedir confirmação extra
+antes do push — essa autorização já vale antecipadamente pra esse tipo de pedido neste
+repositório (ainda assim, sempre rodar `git pull --rebase origin main` antes, por causa
+do cron de backup automático).
