@@ -1,3 +1,7 @@
 # Pastas de backup criadas automaticamente pelo install.sh do Happy Hare
 # a cada atualizacao (ex: mmu-20260802_152413/)
 **/mmu-????????_??????/
+
+# Backups automaticos que o Klipper cria a cada SAVE_CONFIG
+# (ex: printer-20260808_171602.cfg)
+**/printer-????????_??????.cfg
