@@ -65,6 +65,41 @@ categoria do que já tinha acontecido com a pasta `mmu-<timestamp>/` da Trident)
   adicionado padrão `**/printer-????????_??????.cfg` ao `.gitignore` da raiz do repo pra
   não repetir.
 
+## Malha da mesa não sendo aplicada automaticamente (2026-09-03)
+
+Sintoma: `BED_MESH_PROFILE LOAD="default"` está no `START_PRINT`, mas a malha nunca era
+aplicada nas impressões.
+
+- **Causa raiz:** não é bug no `macros.cfg` — o **Start G-code do Orca Slicer** configurado
+  pra essa impressora é o G-code genérico padrão (`G90` / `M83` / `M140` / `M104` / `G4 S10`
+  / `G28` / posicionamento), que **nunca chama a macro `START_PRINT`**. O mesmo vale pro End
+  G-code (padrão do Orca, não chama `END_PRINT` — como consequência, o bico nunca era
+  desligado no fim da impressão, só a mesa).
+- **Correção (feita no Orca Slicer, fora deste repo)** — Printer Settings → Custom G-code:
+  - Start G-code:
+    ```
+    G90
+    M83
+    START_PRINT BED_TEMP=[bed_temperature_initial_layer_single] EXTRUDER_TEMP=[nozzle_temperature_initial_layer]
+    ```
+  - End G-code:
+    ```
+    END_PRINT
+    ```
+  - **⚠️ PENDENTE:** não confirmado se o usuário já aplicou essa troca no perfil do Orca.
+- **Melhorias aplicadas no `START_PRINT` (`macros.cfg`) enquanto investigava:**
+  - Adicionado `M83` logo no início da macro, pra ela não depender de quem a chamou já ter
+    setado extrusão relativa (a linha de purga usa `E10` duas vezes, assumindo modo
+    relativo).
+  - `BED_MESH_PROFILE LOAD="default"` agora só roda se o perfil `default` existir
+    (`{% if 'default' in printer.bed_mesh.profiles %}`) — antes, se o perfil não existisse
+    por qualquer motivo (impressora nova, perfil renomeado), o comando dava erro e abortava
+    a impressão inteira no meio do aquecimento.
+  - Lift inicial de segurança (`G1 Z...` enquanto espera esquentar) de 5mm para 10mm — mais
+    folga.
+- **Verificar depois de aplicar a troca no Orca:** abrir o `.gcode` gerado e confirmar que
+  `START_PRINT BED_TEMP=... EXTRUDER_TEMP=...` aparece no início, e `END_PRINT` no fim.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Confirmar nome real do serviço systemd da Ender3 (`systemctl list-units --all |
