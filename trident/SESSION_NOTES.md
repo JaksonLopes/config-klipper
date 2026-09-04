@@ -225,6 +225,32 @@ Klipper aparecem exatamente uma vez cada (sem perda/duplicação).
   feita num balde fixo pelo Happy Hare, não por "wipe into object/infill"). **Funciona,
   confirmado.** Uso: painel "Exclude Objects" no Mainsail durante a impressão.
 
+### 10. MMU reativada + "Extruder Sensor"/"Toolhead Sensor" parando a impressão (2026-09-04)
+Usuário reativou o MMU e reportou que o "Extruder Sensor" (`extruder_switch_pin` em
+`mmu_hardware.cfg`) fica desconectando momentaneamente durante o movimento do filamento
+(provável causa física: contato ruim/vibração no microswitch ou ruído elétrico no cabo da
+EBB36, pinos PB5/PB6) — isso interrompe a troca de ferramenta e pausa a impressão inteira.
+
+- **Não quis desativar o sensor** (continua sendo útil), só não queria que um soluço dele
+  parasse a impressão.
+- **Descoberta**: com a config atual (`extruder_force_homing: 0`), o "Extruder Sensor" já
+  nem é usado pra homing (só o "Toolhead Sensor" é usado) — ele serve mais pra
+  status/checagem. Mesmo assim, uma falha de leitura durante o `Tx` pode disparar
+  `pause_macro: PAUSE` e parar tudo.
+- **Correção aplicada** em `mmu/base/mmu_parameters.cfg`:
+  `retry_tool_change_on_error: 0` → **`1`** — quando uma troca de ferramenta falha (por
+  esse tipo de soluço em qualquer um dos dois sensores), o Happy Hare agora tenta
+  recuperar automaticamente (equivalente a `MMU_RECOVER` + `Tx` de novo) em vez de pausar.
+- **⚠️ Trade-off avisado ao usuário** (texto do próprio comentário do Happy Hare):
+  "enabling this can mask problems with your MMU" — isso não resolve a causa raiz (contato
+  ruim do sensor), só faz a impressora insistir sozinha. Se o problema for elétrico e
+  piorar com o tempo, pode não ser percebido até causar um erro mais sério (grinding,
+  troca malfeita).
+- **⚠️ PENDENTE (ação física do usuário, fora deste repo):** verificar a fiação/conector
+  do "Extruder Sensor" e "Toolhead Sensor" na EBB36 (pinos PB6 e PB5) — reapertar conector,
+  checar se o cabo está longe de fontes de ruído (motor/CANbus), e verificar o microswitch
+  físico por folga/desgaste. A causa raiz provável é mecânica/elétrica, não de software.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
