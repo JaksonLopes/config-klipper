@@ -251,6 +251,33 @@ EBB36, pinos PB5/PB6) — isso interrompe a troca de ferramenta e pausa a impres
   checar se o cabo está longe de fontes de ruído (motor/CANbus), e verificar o microswitch
   físico por folga/desgaste. A causa raiz provável é mecânica/elétrica, não de software.
 
+### 11. Instalação do encoder Binky (resolve a causa raiz do item 10, 2026-09-04)
+MMX veio com placa **ERCF Binky v1.0.4** (kit Seleadlab, junto com rolamentos 685 e U623) mas
+sem carcaça própria — usuário adaptou uma carcaça de terceiros compatível
+([Blinky Encoder V623ZZ with dual ECAS](https://www.printables.com/model/1618366-blinky-encoder-v623zz-with-dual-ecas))
+e instalou fisicamente no caminho do filamento entre a MMX e a extrusora, com roda de
+**12 dentes**.
+
+- **Fiação:** sinal do encoder ligado direto na **FLY-D7 (placa principal, `[mcu]` padrão)**,
+  pino **PB4** — usando o conector "3D TOUCH" da placa (`PB4 / 5V / G`), que estava livre
+  porque essa Trident usa sonda Eddy, não BLTouch. Confirmado que o Klipper não exige pino
+  "interrupt-capable" (não usa hardware interrupt pra isso), então qualquer GPIO livre
+  serviria — PB4 foi escolhido por já ter um conector de 3 vias pronto no lugar certo.
+- **Correção em `mmu/base/mmu_hardware.cfg`:** descomentada a seção `[mmu_encoder mmu_encoder]`,
+  trocado `encoder_pin: ^mmu:MMU_ENCODER` (placa da MMU) por **`encoder_pin: ^PB4`** (placa
+  principal, sem prefixo de mcu). `encoder_resolution: 1.0` mantido como valor de partida
+  (fórmula do comentário do arquivo, pra roda de 12 dentes) — será sobrescrito pela
+  calibração real.
+- **Correção em `mmu/base/mmu_parameters.cfg`:** `flowguard_enabled: 0 → 1` — agora que existe
+  um encoder de verdade, o método de detecção de clog/tangle por encoder do FlowGuard passa a
+  funcionar (documentação do Happy Hare confirma que esse método não depende dos sensores
+  Toolhead/Extruder Sensor problemáticos do item 10 — só compara movimento do encoder com o
+  da extrusora). Reativado a pedido do usuário, que queria a proteção de clog de volta agora
+  que não depende mais dos switches instáveis.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, rodar `MMU_CALIBRATE_ENCODER` pra
+  medir a resolução real (substitui o `1.0` de partida). Testar impressão pra confirmar que
+  o FlowGuard não pausa mais por falso positivo.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
