@@ -278,6 +278,18 @@ e instalou fisicamente no caminho do filamento entre a MMX e a extrusora, com ro
   medir a resolução real (substitui o `1.0` de partida). Testar impressão pra confirmar que
   o FlowGuard não pausa mais por falso positivo.
 
+### 12. MMU Gate Sensor movido da EBB42 para a FLY-D7 (2026-09-05)
+Usuário rewireou o "MMU Gate Sensor" (sensor compartilhado que detecta filamento passando
+pela gate da MMX) da placa própria da MMU (EBB42, pino `MMU_GATE_SENSOR=PB4` em `mmu.cfg`)
+direto pra placa principal (FLY-D7), pino **PB3**.
+
+- **Correção em `mmu/base/mmu_hardware.cfg`:** `gate_switch_pin: ^mmu:MMU_GATE_SENSOR` →
+  **`gate_switch_pin: ^PB3`** (sem prefixo de mcu, resolve na FLY-D7). Confirmado que PB3
+  não é usado em nenhum outro lugar da config da Trident.
+- O alias `MMU_GATE_SENSOR=PB4` continua declarado em `mmu.cfg` (pino da EBB42) mas ficou
+  órfão/sem uso — inofensivo, só não referencia mais nada.
+- Precisa de `RESTART` pra a mudança valer (config só é lida de novo nesse momento).
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
