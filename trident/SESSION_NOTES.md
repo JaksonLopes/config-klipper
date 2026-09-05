@@ -290,6 +290,36 @@ direto pra placa principal (FLY-D7), pino **PB3**.
   órfão/sem uso — inofensivo, só não referencia mais nada.
 - Precisa de `RESTART` pra a mudança valer (config só é lida de novo nesse momento).
 
+### 13. Falso clog/tangle no FlowGuard - causa raiz e correção (2026-09-05)
+Depois de instalar o encoder (item 11), o FlowGuard (item 10/11) começou a pausar a
+impressão com "A clog/tangle has been detected" com frequência, mesmo sem clog real.
+Usuário mandou o `klippy.log` pra investigar.
+
+- **Causa raiz encontrada no log:** o campo "Tool Change G-code" do perfil do OrcaSlicer
+  dessa impressora ainda usava macros **obsoletas**:
+  ```
+  _MMU_PRE_T_CODE P={layer_num}
+  T[next_extruder]
+  _MMU_POST_T_CODE
+  ```
+  `_MMU_PRE_T_CODE` e `_MMU_POST_T_CODE` não existem mais nas versões atuais do Happy Hare
+  (confirmado na wiki oficial) — toda troca de ferramenta gerava `Unknown command` no log
+  pra essas duas linhas, pulando silenciosamente o que quer que elas deveriam fazer. Isso
+  provavelmente causava a dessincronia que o FlowGuard interpretava como clog.
+- **Correção (feita no OrcaSlicer, fora deste repo):** Tool Change G-code trocado para
+  só `T[next_extruder]` — é o valor recomendado pela wiki atual do Happy Hare, o comando
+  `Tn` já cuida de tudo internamente agora.
+- **Achado secundário (mesmo perfil, Start G-code):** comentários usando `#` em vez de `;`
+  (`# 1. Inicializa...` etc.) também geravam `Unknown command` — inofensivo (as macros de
+  verdade rodavam certo), mas sujava o log. Corrigido pra `;` também.
+- **Ajuste adicional em `mmu/base/mmu_parameters.cfg`:** `flowguard_max_relief: 40 → 70` —
+  mantido como margem de segurança extra mesmo depois da correção do gcode, já que o
+  encoder tem uma imprecisão natural (zona cega + folga do bowden, ver item 11). Usuário
+  optou por manter os dois ajustes juntos em vez de isolar a variável.
+- **⚠️ PENDENTE (ação do usuário):** confirmar com uma impressão de teste (com troca de
+  cor) que o `Unknown command` sumiu do log e que o FlowGuard não dispara mais falso
+  positivo.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
