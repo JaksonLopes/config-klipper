@@ -478,6 +478,19 @@ trocar nada** — sua `CORTE_FILAMENTO` (que chama `_MMU_CUT_TIP`) continua vál
   **`MMU_SENSORS`** — relata o estado de todos os sensores de todas as unidades (gate,
   pre-gate, toolhead, extruder, encoder). Bom pra confirmar que a migração não bagunçou
   nenhum sensor silenciosamente.
+- **Melhoria real encontrada na página oficial "Slicer Setup" da v4:** o Tool Change
+  G-code recomendado pro OrcaSlicer tem parâmetros extras que ainda não temos
+  (adicionados no item 13, só com `T[next_extruder]`):
+  ```
+  T[next_extruder] SLICER_RETRACTION={old_retract_length} SLICER_FW_RETRACTION={use_firmware_retraction}
+  ```
+  Esses dois parâmetros extras avisam o Happy Hare sobre a retração que o próprio
+  OrcaSlicer já está configurado pra fazer, evitando retração duplicada/inconsistente
+  entre o que o fatiador manda e o que o Happy Hare faz por conta própria na troca de
+  ferramenta. **⚠️ PENDENTE (ação do usuário, fora deste repo):** atualizar esse campo
+  no OrcaSlicer com o texto acima. O Start G-code e o End G-code que já configuramos
+  (item 6/13) continuam batendo com a recomendação oficial da v4 — não precisa mudar
+  esses dois.
 
 **⚠️ PENDENTE — comandos pra rodar quando acordar (nessa ordem):**
 ```
@@ -509,6 +522,8 @@ grupo/material>` (ex: gates 0 e 2 com o mesmo material de backup = `0,1,0,1`).
 - [ ] Rodar os comandos de calibração pendentes do item 17 (encoder, gates 1-3, bowden).
 - [ ] Decidir e configurar `endless_spool_groups` (item 17) se quiser EndlessSpool
       funcionando de verdade.
+- [ ] Atualizar o "Tool Change G-code" no OrcaSlicer (item 17) com os parâmetros extras
+      `SLICER_RETRACTION`/`SLICER_FW_RETRACTION` recomendados oficialmente pra v4.
 - [ ] Decidir se quer trocar `channel: dev` para algo mais estável no `moonraker.conf`.
 
 ## Dicas úteis pra próxima sessão
