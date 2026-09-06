@@ -578,6 +578,54 @@ um pouco enquanto os movimentos de nivelamento passam perto da mesa.
 - Não mexe em nenhum offset/altura/calibração — resolve a causa raiz (ooze) em vez de
   mascarar o sintoma.
 
+### 21. `autotune_bowden_length` inflou o comprimento calibrado - estourou PTFE (2026-09-06)
+Durante uma impressão, o filamento chegou nas engrenagens da extrusora e o MMU **não
+desacelerou**, continuando a empurrar em velocidade rápida — sem dar tempo da extrusora
+puxar. Isso arrancou o PTFE do encaixe no hub. Usuário deixou a impressão continuar (a
+extrusora conseguia puxar mesmo com o tubo solto), mas percebeu que a folga/sobra de
+filamento ia **aumentando progressivamente** ao longo da impressão (não só nas trocas de
+ferramenta), e recebeu o aviso:
+```
+Warning: Excess slippage was detected in bowden tube load but 'bowden_apply_correction'
+is disabled. Gear moved 1510.9mm, Encoder measured 1359.4mm.
+```
+
+- **Causa raiz confirmada no `mmu_vars.cfg` puxado do backup automático:**
+  `mmu_unit0_bowden_lengths` tinha saltado de **1320.9mm** (valor calibrado e confirmado
+  no item 19) para **1527.8mm** — um salto de quase 207mm. O registro de estatísticas do
+  gate 1 (`load_distance: 1510.9`, `quality: 0.76`) bate exatamente com o carregamento
+  problemático.
+  - `autotune_bowden_length: 1` estava ativo — esse recurso reajusta o comprimento
+    calibrado do bowden automaticamente a cada carregamento, confiando na telemetria do
+    encoder, sem supervisão.
+  - Como `variable_bowden_lengths: 0` (todo MMX compartilha o mesmo comprimento entre os
+    4 gates), um único carregamento ruim no gate 1 contaminou o valor usado por **todos os
+    gates de uma vez**.
+  - Com o comprimento calibrado inflado, o trecho "rápido" do carregamento (100mm/s,
+    calculado como `comprimento_calibrado - bowden_load_homing_buffer (20mm)`) passa a
+    ultrapassar a posição física real do sensor da extrusora **ainda em velocidade
+    máxima**, sem nunca entrar na fase de home devagar (que deveria dar tempo da
+    extrusora "pegar" o filamento com cuidado) — batendo com o comportamento relatado.
+  - O aumento progressivo da folga durante a impressão (não só nas trocas) se explica por
+    `sync_to_extruder: 1` — a engrenagem do MMU fica sincronizada e girando continuamente
+    junto com a extrusora durante toda a impressão, então a folga do PTFE desconectado
+    (filamento flambando/dobrando no trecho aberto em vez de avançar reto) vai
+    acumulando aos poucos ao longo de toda a impressão, não só em pontos discretos.
+- **Correção aplicada:**
+  - `mmu/base/mmu_parameters_unit0.cfg`: `autotune_bowden_length: 1 → 0` — desativado
+    pra impedir que o sistema volte a reajustar esse valor sozinho sem supervisão.
+  - `mmu/mmu_vars.cfg`: `mmu_unit0_bowden_lengths` revertido de `[1527.8, 1527.8, 1527.8,
+    1527.8]` de volta pro último valor confiável, `[1320.9, 1320.9, 1320.9, 1320.9]`.
+- **⚠️ PENDENTE (ação física do usuário, fora deste repo):**
+  - Reencaixar o PTFE firme no hub (confirmar que a trava/collet ainda segura — trocar
+    se estiver rachada/frouxa) antes de qualquer novo carregamento.
+  - Depois do reencaixe físico confirmado, rodar `MMU_CALIBRATE_BOWDEN
+    BOWDEN_LENGTH=1300` de novo pra ter um valor 100% fresco e confiável (o `1320.9mm`
+    restaurado é o último bom conhecido, mas uma recalibração nova é mais segura).
+  - Considerar `MMU_STATS RESET=1` no gate 1 pra limpar a estatística de qualidade ruim
+    (`0.76`) que ficou registrada por causa desse evento (cosmético, não afeta
+    funcionamento).
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
@@ -592,6 +640,9 @@ um pouco enquanto os movimentos de nivelamento passam perto da mesa.
 - [ ] Atualizar o "Tool Change G-code" no OrcaSlicer (item 17) com os parâmetros extras
       `SLICER_RETRACTION`/`SLICER_FW_RETRACTION` recomendados oficialmente pra v4.
 - [ ] Decidir se quer trocar `channel: dev` para algo mais estável no `moonraker.conf`.
+- [ ] Reencaixar o PTFE no hub (verificar trava/collet) e rodar `MMU_CALIBRATE_BOWDEN
+      BOWDEN_LENGTH=1300` de novo antes de imprimir (item 21 — `autotune_bowden_length`
+      inflou o valor calibrado e já foi desativado, mas falta a recalibração física).
 
 ## Dicas úteis pra próxima sessão
 
