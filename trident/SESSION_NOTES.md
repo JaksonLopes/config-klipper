@@ -409,11 +409,26 @@ v3 → v4 config migration"). Klipper parou de carregar (`cannot import name 'mm
     do Klipper). O assistente aceitou `25` (copiado literal da v3) sem validar na
     hora, mas o Klipper rejeitou no boot exigindo `<= 0` pro tipo de endstop
     `mmu_shared_exit`. **Corrigido:** `25 → -25` em `mmu_parameters_unit0.cfg`.
+  - **`mmu/mmu_vars.cfg` vazio** (só o template, `mmu__revision = 0`) — o
+    `install.sh` migra a config estática (hardware/parameters) mas **não migra as
+    variáveis persistidas de estado/calibração**. Todo o resultado calibrado de
+    verdade (`mmu_calibration_bowden_lengths = 1333.2`,
+    `mmu_encoder_resolution = 0.9752` — valor real medido, não o `1.0` de partida,
+    `mmu_gear_rotation_distances`, `mmu_selector_angles`, estatísticas por gate)
+    ficou intacto só no backup `mmu.V3/mmu_vars.cfg`. **Corrigido:** copiado o
+    conteúdo de calibração do `mmu.V3/mmu_vars.cfg` pro `mmu/mmu_vars.cfg` novo —
+    o próprio comentário do arquivo template confirma que reaproveitar um arquivo
+    de variáveis existente é suportado. Evita ter que refazer
+    `MMU_CALIBRATE_GEAR`/`MMU_CALIBRATE_ENCODER`/`MMU_CALIBRATE_BOWDEN` do zero.
 - **⚠️ PENDENTE (ação do usuário):** testar impressão completa com troca de cor
-  pra confirmar que a v4 está estável. O item da checklist antiga sobre o patch do
-  `mmu.py` (item 3, causa raiz #3) **não se aplica mais** — a v4 reestruturou o
-  código do MMU inteiro, e o `install.sh` sempre reescreve esses arquivos do zero
-  agora.
+  pra confirmar que a v4 está estável, e conferir no console (`MMU_STATUS` ou
+  similar) que os valores calibrados (bowden 1333.2mm, encoder 0.9752) realmente
+  foram reconhecidos pela v4 após copiar o `mmu_vars.cfg` — se a v4 usar nomes de
+  variável diferentes internamente (ex: com prefixo do unit), pode ignorar
+  silenciosamente esses valores antigos e exigir recalibração mesmo assim. O item
+  da checklist antiga sobre o patch do `mmu.py` (item 3, causa raiz #3) **não se
+  aplica mais** — a v4 reestruturou o código do MMU inteiro, e o `install.sh`
+  sempre reescreve esses arquivos do zero agora.
 
 ## Checklist de pendências pro usuário confirmar
 
