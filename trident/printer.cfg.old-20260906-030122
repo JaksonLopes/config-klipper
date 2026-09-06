@@ -1,6 +1,3 @@
-# Happy Hare MMU includes (should be near top of file)
-[include mmu/base/*.cfg]
-[include mmu/macros/*.cfg]
 #####################################################################
 #    ARQUIVOS DE CONFIGURAÇÃO EXTERNOS
 #####################################################################
@@ -16,9 +13,6 @@
 [include heaters_fans.cfg]    # Mesa aquecida, sensores de temperatura e fan da eletrônica
 [include misc.cfg]            # Configurações gerais do sistema (idle timeout, sdcard, exclude_object)
 [include macros.cfg]          # Suas macros (PRINT_START, etc.)
-
-# Happy Hare Client macros (should be after last include or other PAUSE/CANCEL macros)
-[include mmu/optional/client_macros.cfg]
 
 #####################################################################
 #    CONEXÃO E CINEMÁTICA
