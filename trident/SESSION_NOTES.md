@@ -429,6 +429,15 @@ v3 → v4 config migration"). Klipper parou de carregar (`cannot import name 'mm
   da checklist antiga sobre o patch do `mmu.py` (item 3, causa raiz #3) **não se
   aplica mais** — a v4 reestruturou o código do MMU inteiro, e o `install.sh`
   sempre reescreve esses arquivos do zero agora.
+- **Confirmado (2026-09-06):** a v4 realmente não reconheceu os valores copiados do
+  `mmu_vars.cfg` v3 — pediu recalibração completa (`MMU_CALIBRATE_GEAR`,
+  `MMU_CALIBRATE_ENCODER`, `MMU_CALIBRATE_GATE` por gate). Durante a recalibração,
+  `MMU_TEST_MOVE MOVE=100` moveu o filamento **na direção contrária** (puxando pra
+  trás em vez de alimentar). Causa: o assistente de instalação gerou
+  `dir_pin: unit0:PD1` pro `stepper_mmu_gear` (`mmu_hardware_unit0.cfg`) **sem** a
+  inversão `!` que a v3 tinha (`dir_pin: !mmu:MMU_GEAR_DIR`). **Corrigido:**
+  `dir_pin: !unit0:PD1`. Recalibração da engrenagem/encoder/gates precisa ser
+  refeita do zero de qualquer forma (ver pendência abaixo).
 
 ## Checklist de pendências pro usuário confirmar
 
