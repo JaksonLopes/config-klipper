@@ -540,6 +540,26 @@ confirma que só pode ter filamento de um gate por vez nesse ponto físico compa
   (`MMU_EJECT GATE=1`) antes de testar de novo, já que a correção no config não desfaz
   sozinha o que já está fisicamente parado lá. Depois do `RESTART`, reinserir o
   filamento no pre-gate e confirmar que agora recua sozinho.
+- **Resolvido e confirmado pelo usuário** — voltou a recuar certinho.
+
+### 19. `extruder_homing_endstop` errado impedia calibração do bowden (2026-09-06)
+`MMU_CALIBRATE_BOWDEN BOWDEN_LENGTH=1300` falhou 3 tentativas seguidas: "Calibrating
+bowden length on gate 0 using mmu_shared_exit sensor as gate reference point and
+**encoder collision detection**" — usando detecção por colisão (corrente reduzida a
+30%, tentando "sentir" a engrenagem travar no encoder) em vez do sensor real da
+extrusora.
+
+- **Causa:** `extruder_homing_endstop` ficou `none` na v4 (o menuconfig assumiu esse
+  padrão pro preset de toolhead "A4T WWBMG Bambu TZ3"), mas a v3 tinha
+  `extruder_homing_endstop: extruder` (usando o sensor real `Extruder Sensor`,
+  `ebb36:PB6`). Pra troca de ferramenta normal "none" funciona (porque o Toolhead
+  Sensor cobre), mas o comando `MMU_CALIBRATE_BOWDEN` especificamente precisa de um
+  método de homing definido e cai pra colisão por encoder (não confiável) quando é
+  "none".
+- **Correção:** `extruder_homing_endstop: none → extruder`, restaurando o método
+  baseado em sensor real, igual à v3.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, rodar
+  `MMU_CALIBRATE_BOWDEN BOWDEN_LENGTH=1300` de novo.
 
 ## Checklist de pendências pro usuário confirmar
 
