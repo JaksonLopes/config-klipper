@@ -515,7 +515,31 @@ o certo pra essa versão exata sem poder rodar o comando eu mesmo.
 **Decisão pendente do usuário:** configurar `endless_spool_groups` em `mmu.cfg` (linha
 190) se quiser que o EndlessSpool funcione de verdade — sintaxe:
 `MMU_ENDLESS_SPOOL_GROUPS GROUPS=<lista de 4 numeros, um por gate, mesmo numero = mesmo
-grupo/material>` (ex: gates 0 e 2 com o mesmo material de backup = `0,1,0,1`).
+grupo/material>` (ex: gates 0 e 2 com o mesmo material de backup = `0,1,0,1`). Também
+descoberto que existe interface visual pra isso: painel "Mmu" no Mainsail → botão "⋮"
+→ "MAP TOOLS" → editor "Edit TTG Map" com indicador `∞` (EndlessSpool) por gate, grupos
+nomeados por letra (A, B, C...) — não precisa digitar comando.
+
+### 18. `gate_preload_parking_distance` sem recuo - bloqueava troca de gate (2026-09-06)
+Durante a calibração (item 17), usuário empurrou filamento manualmente até o pre-gate do
+gate 1 (aciona o autoload, `gate_autoload: 1`) — o motor levou o filamento até o
+`mmu_shared_exit`, mas **não recuou depois**, ficando parado bem no sensor compartilhado.
+Isso bloqueou o preload de qualquer outro gate (`MMU issue: Filament preload for gate 1
+failed: Cannot preload gate 1: shared 'mmu_shared_exit' path is already occupied`) —
+confirma que só pode ter filamento de um gate por vez nesse ponto físico compartilhado.
+
+- **Causa:** `gate_preload_parking_distance: 0` em `mmu_parameters_unit0.cfg` — copiado
+  fiel da v3 no menuconfig (lá também era `0`), mas na prática isso significa **recuo
+  zero** depois do preload, deixando o caminho compartilhado ocupado. É um parâmetro
+  **separado** do `gate_parking_distance` (usado só na troca de ferramenta formal, `Tx`)
+  — o preload automático (disparado pelo sensor pre-gate) usa esse outro.
+- **Correção:** `gate_preload_parking_distance: 0 → -25` (mesmo recuo do
+  `gate_parking_distance`, que já resolvia o mesmo tipo de problema pro fluxo normal
+  de troca de ferramenta).
+- **⚠️ PENDENTE (ação do usuário):** ejetar o filamento que ficou preso no gate 1 agora
+  (`MMU_EJECT GATE=1`) antes de testar de novo, já que a correção no config não desfaz
+  sozinha o que já está fisicamente parado lá. Depois do `RESTART`, reinserir o
+  filamento no pre-gate e confirmar que agora recua sozinho.
 
 ## Checklist de pendências pro usuário confirmar
 
