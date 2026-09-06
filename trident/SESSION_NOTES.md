@@ -626,6 +626,18 @@ is disabled. Gear moved 1510.9mm, Encoder measured 1359.4mm.
     (`0.76`) que ficou registrada por causa desse evento (cosmético, não afeta
     funcionamento).
 
+### 22. Velocidade de purga pulando passo na extrusora (2026-09-06)
+Depois do ajuste do item 17 (`variable_extruder_purge_speed: 2 → 5`), usuário notou que
+5mm/s estava rápido demais e a extrusora pulava passo durante a purga.
+
+- **Correção em `mmu/base/mmu_macro_vars.cfg`:** `variable_extruder_purge_speed: 5 → 3`
+  — meio-termo entre o valor original (2, mais lento que o necessário) e o 5 que pulava
+  passo. O próprio comentário do arquivo já orienta: "set speed as fast as you can
+  without the extruder skipping steps".
+- **⚠️ PENDENTE (ação do usuário):** confirmar numa próxima purga que 3mm/s não pula mais
+  passo. Se ainda pular, reduzir mais; se sobrar folga, pode subir um pouco (mas não
+  volte pro 5).
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
