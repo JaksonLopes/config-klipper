@@ -439,6 +439,65 @@ v3 → v4 config migration"). Klipper parou de carregar (`cannot import name 'mm
   `dir_pin: !unit0:PD1`. Recalibração da engrenagem/encoder/gates precisa ser
   refeita do zero de qualquer forma (ver pendência abaixo).
 
+### 17. Pesquisa aprofundada v4 + revisão overnight (2026-09-06, madrugada)
+Usuário foi dormir no meio da recalibração pós-migração e pediu pra eu (a) pesquisar a
+fundo a documentação oficial da v4 (`https://moggieuk.github.io/Happy-Hare-Doc/`),
+(b) responder se a v4 já tem macro de corte de filamento built-in ou se precisa manter
+a customizada, (c) comparar v3 (`mmu.V3/`) vs v4 (`mmu/`) atrás de mais melhorias, e
+(d) corrigir o que desse pra corrigir sozinho (só arquivos de config — não tenho acesso
+ao console da impressora pra rodar G-code).
+
+**Resposta sobre o cortador de filamento:** a v4 **usa exatamente a mesma macro
+`_MMU_CUT_TIP`** que a v3, com as mesmas variáveis (`pin_loc_xy`, `pin_park_dist`,
+`cut_fast_move_fraction`, etc. em `_MMU_CUT_TIP_VARS`) — já configuramos tudo isso
+certinho no menuconfig ontem (item 16). **Não precisa de nada customizado extra, nem
+trocar nada** — sua `CORTE_FILAMENTO` (que chama `_MMU_CUT_TIP`) continua válida.
+
+**Achados da pesquisa + correções aplicadas:**
+- `gate_endstop_to_encoder` **ainda existe** na v4 (`mmu_parameters_unit0.cfg`) — só não
+  apareceu no assistente interativo (menuconfig) que passamos ontem, por isso ficou
+  esquecido no valor padrão `10`. **Corrigido: `10 → 210`** (mesma distância física
+  medida na v3, item 14).
+- Confirmado no `mmu_vars.cfg` atual que a v4 usa variáveis com **prefixo `unit0_`**
+  para dados por-gate (`mmu_unit0_gear_rotation_distances`,
+  `mmu_unit0_bowden_lengths`) — diferente das antigas que copiamos do backup v3 (que
+  ficaram órfãs/sem uso, exceto `mmu_selector_angles`, que parece ter sido reconhecida
+  sem prefixo). Confirma que **o bowden também precisa ser recalibrado**
+  (`mmu_unit0_bowden_lengths` está `[-1,-1,-1,-1]`, vazio) — não só engrenagem/encoder
+  como pensávamos ontem.
+- **`endless_spool_groups` está vazio** (`mmu.cfg`) — o EndlessSpool está habilitado
+  (`endless_spool_enabled: 1`) mas sem grupos definidos ele não tem o que fazer (não
+  sabe quais gates são "backup" um do outro). **Não configurei sozinho** porque depende
+  de qual gate físico tem o mesmo material/cor de qual — isso só o usuário sabe. Ver
+  pendência abaixo com a sintaxe.
+- **FlowGuard confirmado:** com `flowguard_encoder_mode: 2` (automático), o parâmetro
+  antigo `flowguard_max_relief` é ignorado — quem importa agora é `desired_headroom`
+  (na seção do encoder, `mmu_parameters_unit0.cfg`). Se o falso clog voltar a acontecer,
+  o ajuste certo agora é aumentar `desired_headroom`, não mais `flowguard_max_relief`.
+- Achei um comando de diagnóstico útil pra rodar amanhã antes de mais nada:
+  **`MMU_SENSORS`** — relata o estado de todos os sensores de todas as unidades (gate,
+  pre-gate, toolhead, extruder, encoder). Bom pra confirmar que a migração não bagunçou
+  nenhum sensor silenciosamente.
+
+**⚠️ PENDENTE — comandos pra rodar quando acordar (nessa ordem):**
+```
+MMU_SENSORS                    # confirma que todos os sensores estão OK primeiro
+MMU_CALIBRATE_ENCODER           # gate 0 ainda selecionado, encoder ainda nao calibrado
+MMU_CALIBRATE_GATE GATE=1       # repete pros gates 1, 2 e 3
+MMU_CALIBRATE_GATE GATE=2
+MMU_CALIBRATE_GATE GATE=3
+MMU_CALIBRATE_BOWDEN            # confirmar se pede BOWDEN_LENGTH= ou roda sozinho
+                                 # (na v3 rodou sem parametro nenhum, usando o toolhead sensor)
+```
+Se `MMU_CALIBRATE_GATE` (singular) não existir como comando, tentar `MMU_CALIBRATE_GATES`
+(plural) — a documentação usa os dois nomes em páginas diferentes, não confirmei qual é
+o certo pra essa versão exata sem poder rodar o comando eu mesmo.
+
+**Decisão pendente do usuário:** configurar `endless_spool_groups` em `mmu.cfg` (linha
+190) se quiser que o EndlessSpool funcione de verdade — sintaxe:
+`MMU_ENDLESS_SPOOL_GROUPS GROUPS=<lista de 4 numeros, um por gate, mesmo numero = mesmo
+grupo/material>` (ex: gates 0 e 2 com o mesmo material de backup = `0,1,0,1`).
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
@@ -447,6 +506,9 @@ v3 → v4 config migration"). Klipper parou de carregar (`cannot import name 'mm
       no OrcaSlicer (item 5) — não crítico, já está seguro.
 - [ ] Testar impressão completa com troca de cor na v4 (item 16) pra confirmar
       estabilidade da migração.
+- [ ] Rodar os comandos de calibração pendentes do item 17 (encoder, gates 1-3, bowden).
+- [ ] Decidir e configurar `endless_spool_groups` (item 17) se quiser EndlessSpool
+      funcionando de verdade.
 - [ ] Decidir se quer trocar `channel: dev` para algo mais estável no `moonraker.conf`.
 
 ## Dicas úteis pra próxima sessão
