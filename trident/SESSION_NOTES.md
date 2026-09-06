@@ -320,6 +320,30 @@ Usuário mandou o `klippy.log` pra investigar.
   cor) que o `Unknown command` sumiu do log e que o FlowGuard não dispara mais falso
   positivo.
 
+### 14. Aviso "Excess slippage" no carregamento do bowden - zona cega do encoder (2026-09-05)
+Depois de corrigir o gcode (item 13), o clog/tangle parou, mas apareceu um aviso novo e
+consistente a cada carregamento de bowden:
+```
+Warning: Excess slippage was detected in bowden tube load but 'bowden_apply_correction'
+is disabled. Gear moved 1333.2mm, Encoder measured 1135.4mm.
+```
+- **Não é um erro novo** — é a mesma "zona cega" do item 11 (distância entre o sensor da
+  gate e a posição física do encoder, onde o Happy Hare não consegue medir movimento
+  porque o filamento ainda não tocou a rodinha).
+- **Correção em `mmu/base/mmu_parameters.cfg`:** `gate_endstop_to_encoder: 10 → 210` —
+  esse parâmetro informa ao Happy Hare a distância real (em mm) entre o sensor da gate e
+  o encoder, calculada pela diferença observada entre movimento da engrenagem e leitura
+  do encoder (~200-220mm em duas medições diferentes). Com o valor certo, o Happy Hare já
+  espera essa zona cega e não trata mais como slippage anômalo.
+- **`bowden_apply_correction` permanece desabilitado (0) — não ativar.** Esse parâmetro
+  faz o Happy Hare "acreditar" no encoder e empurrar a engrenagem pra compensar a
+  diferença. Como a diferença aqui não é slippage real, ativar isso faria ele
+  superinserir ~200mm de filamento a mais tentando corrigir um problema que não existe,
+  arriscando esmagamento/grinding.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, confirmar que o aviso sumiu ou
+  diminuiu bastante. Se quiser refinar ainda mais, medir fisicamente a distância real ao
+  longo do tubo (sensor da gate → rodinha do encoder) e ajustar esse valor.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
