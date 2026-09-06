@@ -491,6 +491,12 @@ trocar nada** — sua `CORTE_FILAMENTO` (que chama `_MMU_CUT_TIP`) continua vál
   no OrcaSlicer com o texto acima. O Start G-code e o End G-code que já configuramos
   (item 6/13) continuam batendo com a recomendação oficial da v4 — não precisa mudar
   esses dois.
+- **Opcional (baixa prioridade):** existe `MMU_CALIBRATE_TOOLHEAD`, que mede
+  automaticamente as 4 distâncias do toolhead (as mesmas que já colocamos manualmente
+  no menuconfig: 93/83/8mm) usando o sensor do toolhead. Documentação confirma que é
+  seguro rodar a qualquer momento, mesmo já tendo valores manuais — só serve como
+  double-check. Não é urgente, os valores manuais já são fisicamente medidos e
+  confiáveis.
 
 **⚠️ PENDENTE — comandos pra rodar quando acordar (nessa ordem):**
 ```
