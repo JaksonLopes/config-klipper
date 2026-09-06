@@ -50,11 +50,12 @@ seções — já corrigido para `klipper-Trident`.
 
 ## Estrutura do repositório (pasta `trident/`)
 
-Reorganizado nesta sessão. Estrutura atual:
+Reorganizado numa sessão anterior (v3). **Atualizado no item 16 (2026-09-06) pra
+migração Happy Hare v4** — estrutura atual:
 
 ```
 trident/
-├── printer.cfg          # Só includes, [mcu]/[mcu mmu], [printer] (cinemática) e SAVE_CONFIG
+├── printer.cfg          # Includes, [mcu] (só a placa principal agora), [printer], SAVE_CONFIG
 ├── toolhead.cfg          # EBB36 (extrusora/fans/tmc) + Eddy (sonda) — fundidos aqui
 ├── steppers.cfg          # stepper_x/y/z/z1/z2 + tmc2209 + adxl345/resonance_tester
 ├── bed_leveling.cfg      # safe_z_home, z_tilt, bed_mesh
@@ -63,16 +64,19 @@ trident/
 ├── macros.cfg            # PRINT_START, PRINT_END, LIMPAR_BICO, CORTE_FILAMENTO, _MMU_PURGE_CUSTOM
 ├── mainsail.cfg           # symlink real no Pi (aqui aparece só como texto do caminho)
 ├── moonraker.conf
-└── mmu/
-    ├── base/              # mmu.cfg, mmu_hardware.cfg, mmu_parameters.cfg, mmu_macro_vars.cfg
-    │                        são arquivos REAIS e editáveis.
-    │                        Os demais (mmu_cut_tip.cfg, mmu_form_tip.cfg, mmu_purge.cfg,
-    │                        mmu_sequence.cfg, mmu_software.cfg, mmu_state.cfg, mmu_leds.cfg,
-    │                        mmu_heater_vent.cfg) são SYMLINKS reais no Pi apontando pra
-    │                        ~/Happy-Hare/config/base/ — aqui no repo aparecem só como um
-    │                        texto com o caminho (o backup automático não segue o symlink).
-    │                        NÃO adianta editar esses no repo, o conteúdo real está no Pi.
-    ├── addons/            # mmu_erec_cutter.cfg (não usado), blobifier.cfg (não usado)
+├── mmu.V3/                # BACKUP da config v3 inteira (criado automaticamente pelo install.sh
+│                            na migração pra v4) — histórico, NÃO editar/usar.
+└── mmu/                   # Config v4, gerada pelo assistente interativo (menuconfig)
+    ├── .mmu_config        # Estado salvo do menuconfig (não editar manualmente)
+    ├── base/              # mmu.cfg, mmu_hardware_unit0.cfg, mmu_parameters_unit0.cfg,
+    │                        mmu_macro_vars.cfg — arquivos REAIS e editáveis. O sufixo
+    │                        "_unit0" é novo na v4 (suporte a múltiplas unidades MMU).
+    ├── macros/            # NOVO na v4 — mmu_cut_tip.cfg, mmu_form_tip.cfg, mmu_purge.cfg,
+    │                        mmu_sequence.cfg, mmu_software.cfg, mmu_state.cfg, mmu_misc.cfg,
+    │                        mmu_heater_vent.cfg, mmu_servo_cutter.cfg, mmu_fan_control.cfg,
+    │                        blobifier.cfg (não usado) — todos SYMLINKS reais no Pi (aqui
+    │                        aparecem só como texto do caminho). NÃO adianta editar esses
+    │                        no repo, o conteúdo real está no Pi.
     └── optional/
 ```
 
@@ -362,15 +366,63 @@ pior do Gate 0 é resquício das falhas de FlowGuard de antes dos itens 13/14 se
 corrigidos. Pode ser zerado com `MMU_STATS RESET=1` se quiser recomeçar o histórico
 (cosmético, não afeta funcionamento).
 
+### 16. Migração forçada Happy Hare v3 → v4 (2026-09-06)
+Usuário clicou "Atualize todos os componentes" no Gerenciador de Atualização sem
+planejar, e o Happy Hare pulou de v3.4.2 pra **v4.0.0** (major version, sem migração
+automática de config — confirmado pelo próprio Happy Hare: "There is no supported
+v3 → v4 config migration"). Klipper parou de carregar (`cannot import name 'mmu_unit'`).
+
+- **Processo:** `cd ~/Happy-Hare && ./install.sh -c ~/printer_Trident_data/config`,
+  escolhida a opção 2 ("upgrade to v4"). Isso renomeia a pasta v3 inteira pra
+  `mmu.V3` (preservada, nada apagado) e roda um assistente interativo (menuconfig)
+  pra gerar a config v4 do zero. Passamos por TODAS as telas manualmente, replicando
+  cada valor customizado da v3 (documentado abaixo).
+- **Estrutura de arquivos mudou:** antes era `mmu/base/{mmu,mmu_hardware,mmu_parameters,
+  mmu_macro_vars}.cfg` (arquivos reais) + vários symlinks. Agora é
+  `mmu/base/{mmu,mmu_hardware_unit0,mmu_parameters_unit0,mmu_macro_vars}.cfg` (note o
+  sufixo `_unit0` — a v4 suporta múltiplas unidades MMU) + uma pasta nova
+  `mmu/macros/*.cfg` (todos symlinks). Backup completo da v3 ficou em `trident/mmu.V3/`
+  neste repo (não usar/editar, é só histórico).
+- **Valores customizados replicados na v4** (todos conferidos manualmente, tela por
+  tela, contra a v3): tipo MMX, placa BTT EBB42 CANbus (UUID `f26f15ebcfb6`), encoder
+  habilitado (pino `PB4` na FLY-D7), gate sensor compartilhado habilitado (pino `PB3`
+  na FLY-D7), sensores de gate/lane entry, toolhead cutter + toolhead sensor
+  (`ebb36:PB5`) + extruder sensor (`ebb36:PB6`) com as distâncias medidas
+  (93/83/8mm), toolhead preset "A4T WWBMG Bambu TZ3", valores de corte
+  (`_MMU_CUT_TIP`: blade position 67, retract 20, pin location 3,286, pin park
+  -5.0, rip length 2.0, fast move fraction 0.85), EndlessSpool habilitado, retry
+  automático de troca de ferramenta habilitado, FlowGuard por encoder habilitado
+  (sync-feedback desabilitado, sem esse hardware), autotune de bowden habilitado,
+  calibração de rotação/encoder não pulada, corrente sincronizada da engrenagem 70%,
+  velocidades de bowden ajustadas (80mm/s carga normal, 18mm/s homing), velocidade de
+  purga aumentada de 2 pra 5 (estava muito lenta), e os caminhos/nomes de serviço do
+  Pi multi-instância (`gcodes` dir, `klipper-Trident.service`,
+  `moonraker-Trident.service` — o assistente veio com valores errados/genéricos aqui,
+  mesmo tipo de erro já visto antes nesse Pi).
+- **Bugs pós-instalação corrigidos:**
+  - `Duplicate canbus_uuid`: o instalador não removeu a declaração antiga
+    `[mcu mmu]` do `printer.cfg` (linha solta, fora da pasta `mmu/` gerenciada) —
+    ficou duplicada com o novo `[mcu unit0]` do `mmu_hardware_unit0.cfg`, mesmo
+    UUID. **Corrigido:** removida a seção `[mcu mmu]` do `printer.cfg`.
+  - `gate_parking_distance` inválido: a v4 **inverteu o sinal** desse parâmetro
+    comparado à v3 (v3: positivo = recuar; v4: negativo = recuar, convenção padrão
+    do Klipper). O assistente aceitou `25` (copiado literal da v3) sem validar na
+    hora, mas o Klipper rejeitou no boot exigindo `<= 0` pro tipo de endstop
+    `mmu_shared_exit`. **Corrigido:** `25 → -25` em `mmu_parameters_unit0.cfg`.
+- **⚠️ PENDENTE (ação do usuário):** testar impressão completa com troca de cor
+  pra confirmar que a v4 está estável. O item da checklist antiga sobre o patch do
+  `mmu.py` (item 3, causa raiz #3) **não se aplica mais** — a v4 reestruturou o
+  código do MMU inteiro, e o `install.sh` sempre reescreve esses arquivos do zero
+  agora.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
       (ver item 6).
 - [ ] Opcional: zerar de vez o "volume de ramming" em Filament Settings → Multimaterial
       no OrcaSlicer (item 5) — não crítico, já está seguro.
-- [ ] Ficar de olho: se atualizar o Happy Hare de novo (`install.sh` rodar), o patch do
-      `mmu.py` (item 3, causa raiz #3) volta a ser sobrescrito — checar se já saiu
-      correção oficial antes, ou reaplicar o patch.
+- [ ] Testar impressão completa com troca de cor na v4 (item 16) pra confirmar
+      estabilidade da migração.
 - [ ] Decidir se quer trocar `channel: dev` para algo mais estável no `moonraker.conf`.
 
 ## Dicas úteis pra próxima sessão
