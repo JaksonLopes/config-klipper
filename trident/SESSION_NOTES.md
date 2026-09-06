@@ -560,6 +560,23 @@ extrusora.
   baseado em sensor real, igual à v3.
 - **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, rodar
   `MMU_CALIBRATE_BOWDEN BOWDEN_LENGTH=1300` de novo.
+- **Resolvido e confirmado** — calibração de bowden completa pra todos os gates
+  (`1320.9mm`), `MMU_STATUS` sem nenhum aviso de calibração pendente.
+
+### 20. Bolinhas de filamento durante Z-tilt/nivelamento a quente (2026-09-06)
+Usuário notou bolinhas de filamento na mesa durante o `G28 Z`/`Z_TILT_ADJUST` do
+`PRINT_START`. Confirmado que **não é contato físico** (a sonda Eddy é sem contato) —
+é só o bico já quente (o `PRINT_START` aquece a extrusora de propósito **antes** de
+nivelar, pra considerar dilatação térmica real — isso é intencional, não mexer) babando
+um pouco enquanto os movimentos de nivelamento passam perto da mesa.
+
+- **Correção em `macros.cfg`:** adicionada uma chamada de `LIMPAR_BICO` logo depois do
+  `TEMPERATURE_WAIT` (bico atingiu temperatura) e **antes** do `Z_TILT_ADJUST` — limpa
+  qualquer ooze acumulado durante o aquecimento antes dos movimentos de nivelamento
+  passarem perto da mesa. A chamada original de `LIMPAR_BICO` no final (depois da malha)
+  continua lá também, como limpeza final antes de imprimir.
+- Não mexe em nenhum offset/altura/calibração — resolve a causa raiz (ooze) em vez de
+  mascarar o sintoma.
 
 ## Checklist de pendências pro usuário confirmar
 
