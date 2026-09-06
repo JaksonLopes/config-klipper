@@ -344,6 +344,24 @@ is disabled. Gear moved 1333.2mm, Encoder measured 1135.4mm.
   diminuiu bastante. Se quiser refinar ainda mais, medir fisicamente a distância real ao
   longo do tubo (sensor da gate → rodinha do encoder) e ajustar esse valor.
 
+### 15. G2/G3 "Unknown command" - arco não habilitado (2026-09-05)
+Console cheio de `Unknown command:"G2"` / `Unknown command:"G3"` durante impressão. Causa:
+o Orca gera movimento em arco (G2/G3) em vez de várias retas pequenas, mas o Klipper só
+entende esses comandos com a seção `[gcode_arcs]` habilitada — que não existia no
+`printer.cfg`. Sem isso, o bico ficava parado exatamente onde devia curvar (defeito real
+de qualidade, não só log sujo).
+
+- **Correção em `printer.cfg`:** adicionado `[gcode_arcs]` (com `resolution` no padrão,
+  1.0mm por segmento).
+- **Precisa de `RESTART`.**
+
+Também explicado ao usuário o significado do "Gate Statistics" (`console_gate_stat:
+emoticon`) que aparece no fim de cada impressão — é um placar histórico de confiabilidade
+por gate (baseado em sucessos/falhas acumuladas), não reflete só a impressão atual. A nota
+pior do Gate 0 é resquício das falhas de FlowGuard de antes dos itens 13/14 serem
+corrigidos. Pode ser zerado com `MMU_STATS RESET=1` se quiser recomeçar o histórico
+(cosmético, não afeta funcionamento).
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
