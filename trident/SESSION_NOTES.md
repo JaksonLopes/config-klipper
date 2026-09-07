@@ -638,6 +638,37 @@ Depois do ajuste do item 17 (`variable_extruder_purge_speed: 2 → 5`), usuário
   passo. Se ainda pular, reduzir mais; se sobrar folga, pode subir um pouco (mas não
   volte pro 5).
 
+### 23. Corte de filamento voltou a falhar após a migração v4 - `cutting_axis` errado (2026-09-06)
+Depois do `RESTART` com a correção do item 21, confirmado pelo log (`mmu.log`) que o fix
+do bowden está funcionando: `Autotune (disabled): Current bowden length for gate 0:
+1320.9mm, Loaded: 1324.6mm (delta: +3.7mm). Ignored` — o autotune calculou uma pequena
+diferença normal e **ignorou** por estar desativado, exatamente como esperado.
+
+Só que na primeira troca de ferramenta de verdade (T0 → T1) o corte de filamento voltou
+a falhar, travando a impressão:
+```
+Error running _MMU_CUT_TIP: Move out of range: -2.000 286.000 1.676 [213.026].
+Occurred when changing tool: T0 > T1
+```
+- **Causa raiz:** `variable_cutting_axis` em `mmu_macro_vars.cfg` estava **`'x'`**, mas o
+  correto pro cabeçote A4T-A4C (confirmado no comentário do próprio arquivo e no backup
+  da v3, `mmu.V3/base/mmu_macro_vars.cfg:301`) é **`'y'`** — esse cabeçote corta no eixo Y
+  em direção a Ymax, não no eixo X.
+  - Essa variável **não aparece no assistente interativo (menuconfig)** da migração v3→v4
+    (item 16) — só existe dentro do `mmu_macro_vars.cfg`, que o instalador regenerou do
+    zero sem preservar esse valor específico da v3. Passou despercebido na conferência
+    tela por tela porque simplesmente não tinha tela pra ele.
+  - Com `cutting_axis: 'x'` errado, o Happy Hare tentava posicionar o cabeçote em
+    `pin_loc_xy.x (3) + pin_park_dist (-5) = -2` no eixo X — inválido, já que
+    `position_min` do X é `0` (`steppers.cfg`). O correto é aplicar essa distância no
+    eixo Y: `pin_loc_xy.y (286) + pin_park_dist (-5) = 281`, um valor válido.
+- **Correção:** `variable_cutting_axis: 'x' → 'y'` em `mmu/base/mmu_macro_vars.cfg`.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, tentar de novo uma troca de
+  ferramenta com corte (`T0 → T1` ou similar) pra confirmar que voltou a cortar
+  normalmente. Se ainda falhar, vale reconferir os outros valores de corte
+  (`blade_pos: 67`, `pin_loc_xy: 3,286`, `pin_loc_compressed_xy: 0.5,250`) contra a v3,
+  já que ficou claro que nem todo valor customizado da v3 foi preservado na migração.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
