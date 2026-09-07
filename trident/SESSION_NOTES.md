@@ -691,6 +691,95 @@ Occurred when changing tool: T0 > T1
   ferramenta com corte (`T0 → T1` ou similar) pra confirmar que agora corta na direção e
   posição certas.
 
+### 24. Auditoria completa v3 vs v4, variável por variável (2026-09-06)
+A pedido do usuário ("confere se tudo bateu certinho... em todos os arquivos, e em todas
+as variáveis... já deixou passar bastante erro"), depois de já termos encontrado 5 bugs de
+migração avulsos (itens 16/18/19/21/23), foi feita uma auditoria exaustiva comparando os
+4 arquivos de config do Happy Hare da v4 (`mmu/base/{mmu,mmu_hardware_unit0,
+mmu_parameters_unit0,mmu_macro_vars}.cfg`) contra o backup completo da v3
+(`mmu.V3/base/{mmu,mmu_hardware,mmu_parameters,mmu_macro_vars}.cfg`), linha por linha,
+usando 4 agentes em paralelo (um por arquivo).
+
+**Corrigido (regressões confirmadas da migração):**
+- `mmu.cfg`: `purge_macro: _MMU_PURGE → _MMU_PURGE_CUSTOM` — a migração tinha revertido
+  pra macro de purga padrão de fábrica, perdendo o comportamento customizado (mover pro
+  balde X10,Y310 e limpar o bico depois, ver item 2 do histórico).
+- `mmu.cfg`: `extruder_switch_pin` e `toolhead_switch_pin` (ambos `ebb36:PB6`/`ebb36:PB5`)
+  — faltava o modificador de pull-up interno `^` que a v3 tinha. Sem pull-up esses pinos
+  podem ficar "flutuando" e gerar leitura ruidosa/errática — possivelmente relacionado
+  aos soluços do "Extruder Sensor"/"Toolhead Sensor" já vistos no item 10.
+- `mmu_hardware_unit0.cfg`: mesmo problema de pull-up ausente em `mmu_shared_exit_switch_pin`
+  (`PB3`) e `encoder_pin` (`PB4`) — corrigido, ambos com `^` de volta.
+- `mmu_parameters_unit0.cfg`: `flowguard_enabled: 0 → 1` — a proteção de clog/tangle por
+  encoder, que tínhamos reativado deliberadamente no item 11 (depois de instalar o
+  encoder Binky), tinha voltado a ficar DESATIVADA depois da migração pra v4. Essa era a
+  mais grave de todas: a impressora estava sem essa camada de proteção sem o usuário saber.
+- `mmu_parameters_unit0.cfg`: restaurados 4 valores de margem de segurança pro valor mais
+  conservador que a v3 usava (a v4 tinha reduzido todos, o que é consistente com o padrão
+  de "empurra rápido demais / passa do ponto" que já causou o incidente do PTFE no item 21):
+  - `extruder_homing_max: 100 → 80`
+  - `bowden_load_homing_buffer: 20 → 25`
+  - `bowden_unload_homing_buffer: 40 → 50`
+  - `gear_load_speed: 100 → 80` (a v3 tinha dois perfis, `gear_from_spool_speed: 80` e
+    `gear_from_buffer_speed: 150`; como este MMU não tem buffer físico
+    [`has_filament_buffer: 0`], o valor realmente usado na v3 era 80 — a v4 uniu os dois
+    perfis num só e ficou com 100, mais rápido que o testado)
+- `mmu_macro_vars.cfg` (`_MMU_SEQUENCE_VARS`): `variable_post_form_tip_position` e
+  `variable_pre_load_position`, ambos `-999,-999,0 → 10,310,0` — a v3 movia o cabeçote
+  pra perto do balde de purga (X10,Y310, mesma posição usada em `LIMPAR_BICO` e
+  `_MMU_PURGE_CUSTOM`) antes de carregar e depois de cortar/formar a ponta; a v4 tinha
+  desativado os dois movimentos (virou no-op, ficava onde estivesse).
+- `mmu_macro_vars.cfg` (`_MMU_SEQUENCE_VARS`): `variable_auto_home: False → True` — a v3
+  permitia que o Happy Hare homasse os eixos automaticamente se necessário antes de um
+  movimento de parking; a v4 tinha desativado isso. Possivelmente relacionado às mensagens
+  `DEBUG: Cannot save toolhead position or z-hop for unload because not homed` vistas no
+  log do item 23/`MMU_EJECT`.
+
+**Analisado e decidido NÃO alterar** (diferença real, mas com boa razão pra manter a v4):
+- `gear_homing_speed: 80 (v3) → 50 (v4)` e `gear_short_move_accel: 600 (v3) → 400 (v4)` —
+  a v4 ficou MAIS conservadora (mais devagar) nesses dois, não mais arriscada. Mantido.
+- `toolhead_unload_safety_margin: 5 (v3) → 10 (v4)` — a v4 tem MAIS margem de segurança
+  (o comentário do próprio arquivo diz que é o valor padrão de fábrica), não menos.
+  Mantido.
+- `variable_rotation_distances: 1` (v4) vs v3 (não definido explicitamente, comentado) —
+  esse "1" é consistente com o fluxo de calibração por-gate que já usamos
+  (`MMU_CALIBRATE_GATE GATE=1/2/3`, item 17) — se fosse "0" (uma engrenagem só, sem
+  variação por gate) não faria sentido calibrar cada gate separadamente. Mantido.
+- `flowguard_max_relief` (ausente na v4) — não é uma perda de verdade: com
+  `flowguard_encoder_mode: 2` (automático, que já usamos) esse parâmetro antigo é
+  ignorado mesmo, quem manda agora é `desired_headroom` (já confirmado no item 17).
+- `gate_homing_endstop: mmu_gate (v3) → mmu_shared_exit (v4)` — é só renomeação de
+  convenção (a própria doc da v4 lista isso como equivalente direto), não mudança de
+  comportamento.
+- Blocos inteiros ausentes de `espooler_*`, `sync_feedback_*` e `heater_*` — conferido
+  que nenhum desses sensores/hardwares está fisicamente instalado nesta Trident (nem na
+  v3, nem na v4) — ausência é limpeza de template, não perda de config real.
+- Renomeações puramente cosméticas confirmadas equivalentes (mesmo valor, nome
+  diferente): `bowden_allowable_load_delta ↔ bowden_allowable_encoder_delta`,
+  `toolhead_move_error_tolerance ↔ bowden_move_error_tolerance` (v4 dividiu em dois,
+  ambos mesmo valor), `preload_attempts ↔ gate_preload_attempts`, cores/nomes de efeito
+  de LED (`effect_heating`, `effect_selecting`, `effect_error`, `effect_checking`).
+
+**⚠️ PENDENTE — precisa de confirmação física ou pesquisa antes de mexer:**
+- **Ordem dos LEDs de "exit" pode estar invertida:** v3 tinha
+  `exit_leds: neopixel:mmu_leds (4-1)` (decrescente), v4 tem `(1-4)` (crescente). Se a
+  fiação física não mudou, isso faria cada gate acender o LED físico errado (ex: gate 0
+  acender o LED que era do gate 3). **Ação sugerida:** olhar fisicamente qual LED acende
+  ao selecionar cada gate e comparar com a posição física real. Não mexi nisso sem
+  confirmação visual, pra não arriscar inverter errado.
+- **`gear_max_velocity` (v3: 300) e `gear_max_accel` (v3: 1500) não encontrados em
+  NENHUM arquivo da v4.** Eram limites físicos de segurança "nunca excedidos independente
+  de outros parâmetros" — não achamos equivalente na v4. Pode ter sido removido de
+  propósito da arquitetura nova (outras validações internas podem ter assumido esse
+  papel) ou ser uma lacuna real. Recomendo pesquisar na documentação/GitHub oficial do
+  Happy Hare v4 antes de decidir se precisa recriar esse limite em algum lugar.
+- **`homing_extruder` (v3: 1) não encontrado na v4** — parâmetro relacionado à
+  possibilidade de homing por stallguard/touch na extrusora (recurso avançado que não
+  usamos, já que usamos o sensor real `extruder_homing_endstop: extruder`). Baixo risco
+  provável, mas fica registrado.
+- **`heater_max_temp` e todo o bloco de secagem/aquecimento da MMU** sumiram da v4, mas
+  como não há heater físico instalado na MMU desta Trident, é esperado/inofensivo.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
@@ -708,6 +797,13 @@ Occurred when changing tool: T0 > T1
 - [ ] Reencaixar o PTFE no hub (verificar trava/collet) e rodar `MMU_CALIBRATE_BOWDEN
       BOWDEN_LENGTH=1300` de novo antes de imprimir (item 21 — `autotune_bowden_length`
       inflou o valor calibrado e já foi desativado, mas falta a recalibração física).
+- [ ] Conferir visualmente se a ordem dos LEDs de gate está certa (item 24 — pode estar
+      invertida desde a migração pra v4).
+- [ ] Pesquisar se `gear_max_velocity`/`gear_max_accel` (limites de segurança da v3)
+      têm equivalente na v4, ou se precisam ser recriados em algum lugar (item 24).
+- [ ] Testar uma impressão com troca de cor pra confirmar que o FlowGuard (reativado no
+      item 24), a macro de purga customizada e as posições de parking restauradas estão
+      funcionando bem juntas.
 
 ## Dicas úteis pra próxima sessão
 
