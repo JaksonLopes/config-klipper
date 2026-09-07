@@ -663,11 +663,33 @@ Occurred when changing tool: T0 > T1
     `position_min` do X é `0` (`steppers.cfg`). O correto é aplicar essa distância no
     eixo Y: `pin_loc_xy.y (286) + pin_park_dist (-5) = 281`, um valor válido.
 - **Correção:** `variable_cutting_axis: 'x' → 'y'` em `mmu/base/mmu_macro_vars.cfg`.
+- **Continuação (mesmo dia):** com o `cutting_axis` corrigido, o corte parou de travar
+  mas passou a cortar **pro lado errado** (direção oposta ao Ymax). Segunda variável não
+  preservada na migração encontrada: `variable_pin_loc_compressed_xy` (posição com o
+  cortador totalmente pressionado) estava `0.5, 250` na v4, mas o backup da v3 tinha
+  `3.0, 310.0`. Com `cutting_axis: 'y'`, o X precisa ficar igual ao `pin_loc_xy.x` (3) e
+  o Y precisa ir até perto do Ymax (311) — com `250` (menor que os 286 do ponto de
+  contato do pino), o corte ia na direção contrária. **Corrigido:**
+  `variable_pin_loc_compressed_xy: 0.5, 250 → 3.0, 310.0`.
+- **Achado secundário, não alterado:** `variable_pushback_length` está `15.0` na v4 atual,
+  mas o backup da v3 tinha `0`. Não mexi nesse porque não está relacionado ao bug
+  reportado (não afeta a direção/posição do corte, só o quanto o resto do filamento é
+  empurrado de volta pro hotend depois) — mas fica registrado como mais um valor que a
+  migração pode não ter preservado fielmente, caso o usuário note algo estranho relacionado
+  a isso depois.
+- **Auditoria completa feita (mesmo dia):** conferidas TODAS as variáveis de
+  `_MMU_CUT_TIP_VARS` da v4 contra o backup da v3, uma por uma. Fora as duas já
+  corrigidas acima, tudo mais bate exatamente: `blade_pos`, `retract_length`,
+  `pin_loc_xy`, `pin_park_dist`, `rip_length`/`rip_speed`, todas as velocidades de corte
+  (`travel_speed`, `cut_fast_move_speed`, `cut_slow_move_speed`, `evacuate_speed`,
+  `cut_dwell_time`, `cut_fast_move_fraction`, `extruder_move_speed`),
+  `safe_margin_xy` e as configs de servo de gantry. Só o `pushback_length` continua
+  diferente (v3: 0, v4: 15.0) — não mexe na posição/direção do corte, só em quanto do
+  resto do filamento é empurrado de volta pro hotend depois de cortar, então não é
+  perigoso e ficou como está.
 - **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, tentar de novo uma troca de
-  ferramenta com corte (`T0 → T1` ou similar) pra confirmar que voltou a cortar
-  normalmente. Se ainda falhar, vale reconferir os outros valores de corte
-  (`blade_pos: 67`, `pin_loc_xy: 3,286`, `pin_loc_compressed_xy: 0.5,250`) contra a v3,
-  já que ficou claro que nem todo valor customizado da v3 foi preservado na migração.
+  ferramenta com corte (`T0 → T1` ou similar) pra confirmar que agora corta na direção e
+  posição certas.
 
 ## Checklist de pendências pro usuário confirmar
 
