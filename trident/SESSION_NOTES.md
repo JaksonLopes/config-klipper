@@ -780,6 +780,42 @@ usando 4 agentes em paralelo (um por arquivo).
 - **`heater_max_temp` e todo o bloco de secagem/aquecimento da MMU** sumiram da v4, mas
   como não há heater físico instalado na MMU desta Trident, é esperado/inofensivo.
 
+### 25. Instalação do Decontaminator (dois baldes de purga) - macro alternando entre eles (2026-09-09)
+Usuário imprimiu e instalou o Decontaminator na Trident, com **dois baldes separados**
+(não um só, como antes): balde A em `X0, Y311`, balde B em `X60, Y311`. Ainda não comprou
+a escova de latão do Decontaminator — a escova antiga (usada por `LIMPAR_BICO`, na zona
+`X206-245, Y310`) continua em uso, sem mudança nenhuma.
+
+A página oficial do Decontaminator sugere um exemplo de macro que sorteia uma posição
+X **contínua** entre 0 e 70 a cada purga (pensado pra um balde único e comprido, tipo a
+variante "Micron"). Como o setup daqui é de **dois baldes discretos e separados**, não um
+trough contínuo, adaptei a lógica pra alternar exatamente entre as duas posições reais
+(`X0` e `X60`) em vez de sortear um X qualquer no meio do caminho (que poderia cair fora
+de qualquer um dos dois baldes).
+
+- **Correção em `macros.cfg` (`_MMU_PURGE_CUSTOM`):** adicionada `variable_next_bucket_x`
+  (0 ou 60) que guarda qual balde usar da próxima vez — a macro lê o valor atual, já
+  inverte pra próxima chamada (`SET_GCODE_VARIABLE`), e move pro balde escolhido
+  (`Y311`, no limite físico real do eixo Y confirmado em `steppers.cfg`) antes de chamar
+  `_MMU_PURGE`. Isso garante alternância 50/50 real entre os dois baldes, em vez de
+  aleatório (que pode desbalancear em impressões com poucas trocas de cor).
+- **Não usei os nomes de macro do exemplo oficial** (`MOVE_TO_BUCKET`, `clean_nozzle`) —
+  em vez disso, integrei a lógica dentro da `_MMU_PURGE_CUSTOM` que já existia, pra não
+  duplicar responsabilidade (purga e limpeza de bico continuam sendo uma coisa só, como
+  já era antes).
+- **`LIMPAR_BICO` não foi alterada** — continua limpando na escova antiga
+  (`X206-245, Y310`), por decisão do usuário (ainda não tem a escova nova).
+- **Nota técnica:** `variable_next_bucket_x` é uma variável persistida pelo Klipper
+  dentro da própria macro — sobrevive entre chamadas normalmente, mas **reseta pra 0 a
+  cada `RESTART`** (não é salva em `mmu_vars.cfg` nem em disco). Isso é inofensivo (só
+  significa que depois de todo restart a primeira purga usa sempre o balde X0), não é
+  motivo de preocupação.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, testar uma impressão com pelo
+  menos 2 trocas de cor e confirmar visualmente que a purga alterna entre os dois baldes
+  corretamente e sem colidir com nada. Quando comprar a escova de latão nova do
+  Decontaminator, avisar pra ajustarmos `LIMPAR_BICO` pra usar ela em vez da escova
+  antiga.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
