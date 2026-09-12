@@ -855,6 +855,39 @@ conhecida e comparar visualmente) em vez de comparar com a leitura do encoder �
 próprio console guia o processo passo a passo quando o comando é rodado. Sugiro colar o
 output de cada comando aqui pra eu acompanhar e confirmar que os valores fazem sentido.
 
+### 27. Sensor "Extruder" (default:extruder) falso runout pausando impressões (2026-09-12)
+Últimas impressões pausavam sozinhas com "Filament runout occurred at extruder. Manual
+intervention is required", mesmo com filamento presente de verdade. Usuário precisava ir
+manualmente desativar o sensor pelo botão do Mainsail pra impressão continuar.
+
+- **Causa confirmada no `mmu.log`:** o sensor `default:extruder` (entrada da extrusora,
+  `ebb36:PB6`) fica disparando inserção/remoção repetidas vezes em poucos segundos
+  (`__MMU_SENSOR_INSERT` às 02:05:39, 02:05:48, 02:05:57, 02:06:01...) — clássico de
+  microswitch com mau contato/sujeira, não filamento saindo de verdade. Em dois momentos
+  isso foi interpretado como runout real e pausou a impressão (`02:33:40` e `02:50:14`).
+  Mesmo suspeita física do usuário: sensor com defeito, precisa desmontar a cabeça pra
+  inspecionar (sem tempo agora).
+- **Decisão do usuário:** não desativar o sensor permanentemente (ele ainda ajuda a
+  confirmar que o filamento entrou certo no carregamento) — só não deixar ele causar
+  pausa **durante a impressão**.
+- **Correção em `mmu/base/mmu_macro_vars.cfg` (`_MMU_SEQUENCE_VARS`):**
+  - `variable_user_pre_load_extension`: `SET_FILAMENT_SENSOR SENSOR=default:extruder ENABLE=1`
+    — reativa o sensor logo antes de qualquer carregamento (print ou standalone).
+  - `variable_user_post_load_extension`: `SET_FILAMENT_SENSOR SENSOR=default:extruder ENABLE=0`
+    — desativa de novo assim que o carregamento termina, antes da impressão continuar.
+  - Comando confirmado testando no console (`SET_FILAMENT_SENSOR SENSOR=default:extruder
+    ENABLE=0/1` — o Klipper rejeitou `SENSOR=extruder` sozinho, sugerindo o nome certo
+    `default:extruder`).
+  - Resultado esperado: sensor ativo só durante o carregamento (útil pra homing/detecção),
+    desligado o resto do tempo — não pode mais gerar falso runout no meio da impressão.
+    O sensor "Toolhead" continua ativo o tempo todo (é o mais confiável dos dois).
+- **⚠️ PENDENTE (ação do usuário):** ainda é preciso desmontar a cabeça e inspecionar o
+  microswitch/conector do "Extruder Sensor" fisicamente quando sobrar tempo — essa
+  automação só evita o sintoma (pausa no meio da impressão), não resolve a causa raiz
+  (contato ruim). Também confirmar depois do `RESTART` que o carregamento normal continua
+  funcionando (o sensor precisa estar ativo bem na hora do homing pro
+  `extruder_homing_endstop: extruder` funcionar).
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
