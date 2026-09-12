@@ -919,6 +919,22 @@ problema do sensor da extrusora, já resolvido no item 27). Achados:
   bater com os 4 gates da MMX). Não bloqueia nada ("will attempt to continue"), mas se
   quiser silenciar o aviso, é só ajustar esse número no perfil da impressora no Orca.
 
+### 29. Limpeza de variáveis órfãs da v3 no mmu_vars.cfg (2026-09-12)
+A pedido do usuário, removidas do `[Variables]` de `mmu/mmu_vars.cfg` as variáveis que
+sobraram da cópia manual feita na migração v3→v4 (item 16) e que a v4 nunca leu de
+verdade — confirmado ao longo da sessão que ficaram **estáticas** (nunca mudaram de
+valor) enquanto as equivalentes com prefixo `unit0_` cresciam normalmente com o uso real:
+- `mmu_calibration_bowden_home` (v4 usa `mmu_unit0_bowden_home`)
+- `mmu_calibration_bowden_lengths` (v4 usa `mmu_unit0_bowden_lengths`)
+- `mmu_calibration_clog_length` (v4 usa `mmu_unit0_encoder_clog_length`)
+- `mmu_encoder_resolution` sem prefixo (v4 usa `mmu_unit0_encoder_resolution`)
+- `mmu_statistics_gate_0` a `_3` sem prefixo (v4 usa `mmu_unit0_statistics_gate_0..3`)
+
+**Não removido** (confirmado ainda em uso real, atualiza a cada impressão):
+`mmu_statistics_swaps` e `mmu_statistics_counters` (não têm equivalente com prefixo
+`unit0_` — são estatísticas gerais da máquina, não por-unit), e todas as `mmu_state_*`/
+`mmu_extruder_state_*` (refletem o estado atual real da MMU).
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
