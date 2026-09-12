@@ -888,6 +888,37 @@ manualmente desativar o sensor pelo botão do Mainsail pra impressão continuar.
   funcionando (o sensor precisa estar ativo bem na hora do homing pro
   `extruder_homing_endstop: extruder` funcionar).
 
+### 28. Outras anomalias encontradas revisando os logs a fundo (2026-09-12)
+A pedido do usuário, revisão completa do `mmu.log`/`klippy.log` anexados (além do
+problema do sensor da extrusora, já resolvido no item 27). Achados:
+
+- **`Warning: Selector angles not found in mmu_vars.cfg. Using configured defaults`** —
+  aparecia em TODO restart. Causa: `mmu_vars.cfg` tinha `mmu_selector_angles` (sem
+  prefixo), mas a v4 espera `mmu_unit0_selector_angles` (mesmo padrão de
+  `mmu_unit0_bowden_lengths`/`mmu_unit0_gear_rotation_distances`/`mmu_unit0_encoder_resolution`
+  — todo dado calibrado por-unit leva o prefixo `unit0_` na v4). Isso não estava causando
+  problema na prática só por coincidência (o valor calibrado `[60,0,180,120]` é igual ao
+  default já configurado em `servo_gate_angles`), mas se um dia o seletor for recalibrado
+  de verdade (`MMU_CALIBRATE_SELECTOR`), o valor novo NUNCA seria reconhecido no próximo
+  restart, sempre voltando pro default do config. **Corrigido:** renomeado em
+  `mmu/mmu_vars.cfg` pra `mmu_unit0_selector_angles`.
+- **Gate 0 falhou em carregar filamento 3 vezes** ("filament did not reach gate homing
+  sensor" / "Couldn't pick up filament at gate") em momentos diferentes do log. Não é bug
+  de config — ou o gate 0 estava fisicamente sem filamento, ou há um problema mecânico de
+  captação específico desse gate (seletor desalinhado, etc). O usuário já contornou
+  remapeando T0 pro gate 1 via TTG map. **⚠️ PENDENTE (ação do usuário):** quando puder,
+  verificar fisicamente o gate 0 (tem filamento? entra bem quando empurrado manualmente?)
+  e testar `MMU_PRELOAD GATE=0`.
+- **`Shutdown due to webhooks request` (Klipper inteiro, não só o MMU) às 01:59:49** —
+  investigado no `klippy.log`: veio de uma chamada `emergency_stop` via API do Moonraker
+  (`"method":"emergency_stop"`), não de falha de hardware/MCU/comunicação. Bate com o
+  usuário provavelmente clicando o botão de emergência no Mainsail no meio da sequência
+  de pausas seguidas que estava tendo naquele momento. **Não é bug, não precisa de ação.**
+- **`Warning: Looks like slicer is setup with 3 extruders but your MMU has 4 gates`** —
+  cosmético, o perfil do OrcaSlicer está configurado com 3 extrusoras em vez de 4 (pra
+  bater com os 4 gates da MMX). Não bloqueia nada ("will attempt to continue"), mas se
+  quiser silenciar o aviso, é só ajustar esse número no perfil da impressora no Orca.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
