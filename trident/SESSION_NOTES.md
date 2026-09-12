@@ -935,6 +935,30 @@ valor) enquanto as equivalentes com prefixo `unit0_` cresciam normalmente com o 
 `unit0_` — são estatísticas gerais da máquina, não por-unit), e todas as `mmu_state_*`/
 `mmu_extruder_state_*` (refletem o estado atual real da MMU).
 
+### 30. Ajuste de parking: menos tempo parado em cima da peça, cancelar mais previsível (2026-09-12)
+Usuário reportou que o cabeçote ficava parado em cima da peça depois de trocar de
+filamento/cortar (risco de escorrer filamento), e que cancelar a impressão parecia ir
+pra um canto "aleatório" da mesa.
+
+- **Causa do "cima da peça":** `variable_restore_xy_pos: 'last'` fazia o cabeçote voltar
+  exatamente pra onde estava antes da troca (em cima da peça) e ficar ali até a impressão
+  retomar. **Corrigido:** `'last' → 'next'` — agora vai direto pro próximo ponto de
+  extrusão em vez de voltar pro último, reduzindo o tempo parado numa posição (recurso
+  documentado no próprio Happy Hare especificamente pra reduzir blobbing).
+- **Causa do "canto aleatório" no cancelamento:** `variable_park_cancel` tinha
+  `x,y = -999,-999` (= "não mover") — ao cancelar, o cabeçote ficava exatamente onde
+  estava no momento do cancelamento, por isso parecia aleatório (dependia de onde a
+  impressão estava). **Corrigido:** `-999,-999 → 50,50` — agora sempre vai pro mesmo
+  canto fixo, igual já acontecia com pausa (`park_pause`) e conclusão (`park_complete`).
+- **Não mexido (explicado ao usuário, é necessário):** a posição antes de iniciar a
+  impressão (canto do `G28`/homing + `LIMPAR_BICO`) e os pontos de troca/corte (baldes
+  do Decontaminator em X0/X60,Y311, corte perto de X10,Y310) são fixos por necessidade
+  física — são posições reais de hardware (endstops, balde, escova), não dá pra tornar
+  "dinâmico".
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, testar uma impressão com troca
+  de cor e confirmar que o cabeçote não fica mais parado em cima da peça, e testar um
+  cancelamento pra confirmar que vai sempre pro mesmo canto (50,50).
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
