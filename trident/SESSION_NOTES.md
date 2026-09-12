@@ -816,6 +816,45 @@ de qualquer um dos dois baldes).
   Decontaminator, avisar pra ajustarmos `LIMPAR_BICO` pra usar ela em vez da escova
   antiga.
 
+### 26. Encoder Binky removido fisicamente - desativado no código (2026-09-12)
+Usuário removeu o encoder Binky (instalado no item 11) fisicamente da Trident — estava
+travando/prendendo o filamento e empurrando o PTFE pra fora do encaixe. Desativado no
+código (comentado, não apagado, pra facilitar reinstalar depois se quiser).
+
+- **`mmu/base/mmu_hardware_unit0.cfg`:**
+  - `[mmu_unit unit0] encoder: unit0 → ` (vazio) — desconecta a unidade MMU do encoder.
+  - Seção `[mmu_encoder unit0]` inteira comentada (pino, resolução, headroom, etc.) —
+    preservada como referência, não apagada.
+- **`mmu/base/mmu_parameters_unit0.cfg`:**
+  - `flowguard_enabled: 1 → 0` — o FlowGuard dependia do encoder (só funciona com
+    encoder OU sensor de sync-feedback/tensão, e nenhum dos dois está instalado agora).
+    Reativado no item 11, desativado de novo aqui.
+  - `skip_cal_encoder: 0 → 1` — não faz sentido pedir calibração de um sensor que não
+    existe mais fisicamente.
+  - `encoder_move_validation: 1 → 0` — não há mais encoder pra validar se o movimento
+    comandado bateu com o movimento real.
+- **Não mexido (fica órfão, mas inofensivo):** `gate_endstop_to_encoder`,
+  `flowguard_encoder_mode`, `flowguard_encoder_max_motion`, `bowden_allowable_encoder_delta`
+  — todos parâmetros só usados quando há encoder, ignorados agora sem erro.
+- **`mmu_unit0_encoder_resolution`/`mmu_unit0_encoder_clog_length` em `mmu_vars.cfg`** —
+  não apagados, ficam só sem uso (não fazem mal, é só histórico de calibração antiga).
+
+**⚠️ PENDENTE (ação do usuário) - recalibração completa pedida pelo usuário:**
+Depois do `git pull --rebase` + `RESTART` no Pi, rodar nessa ordem:
+```
+MMU_STATUS                      # confirma que não sobrou nenhum erro/aviso de encoder
+MMU_CALIBRATE_GEAR               # recalibra rotation_distance da engrenagem (agora sem encoder pra medir - vai usar o método alternativo por marcação manual de filamento, o console explica o passo a passo)
+MMU_CALIBRATE_GATE GATE=1        # repete pros gates 1, 2 e 3
+MMU_CALIBRATE_GATE GATE=2
+MMU_CALIBRATE_GATE GATE=3
+MMU_CALIBRATE_BOWDEN BOWDEN_LENGTH=1300   # recalibra o comprimento do bowden (usa o Extruder Sensor pra homing, não precisa de encoder)
+```
+Nota: sem encoder, `MMU_CALIBRATE_GEAR`/`MMU_CALIBRATE_GATE` usam um método diferente
+de medição (marcação manual do filamento com caneta/fita, avançar uma distância
+conhecida e comparar visualmente) em vez de comparar com a leitura do encoder — o
+próprio console guia o processo passo a passo quando o comando é rodado. Sugiro colar o
+output de cada comando aqui pra eu acompanhar e confirmar que os valores fazem sentido.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
