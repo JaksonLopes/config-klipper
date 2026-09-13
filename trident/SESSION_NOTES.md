@@ -959,6 +959,18 @@ pra um canto "aleatório" da mesa.
   de cor e confirmar que o cabeçote não fica mais parado em cima da peça, e testar um
   cancelamento pra confirmar que vai sempre pro mesmo canto (50,50).
 
+### 31. Escova de latão do Decontaminator instalada - LIMPAR_BICO atualizada (2026-09-13)
+Usuário comprou e instalou a escova de latão do Decontaminator (item 25 - antes usava a
+escova antiga, provisória). Posição física medida: `Y304`, varrendo de `X52` (início) até
+`X15` (fim) — fica bem entre os dois baldes de purga (`X0` e `X60`, `Y311`, item 25).
+
+- **Correção em `macros.cfg` (`LIMPAR_BICO`):** trocado o alvo de limpeza da escova
+  antiga (`X206-245, Y310`) pra escova de latão nova (`X15-52, Y304`), mantendo o mesmo
+  padrão de 3 passadas de vai-e-vem.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, rodar `LIMPAR_BICO` manualmente
+  (ou deixar rodar no próximo `PRINT_START`) e confirmar visualmente que o bico realmente
+  encosta na escova nova ao longo do trecho X15-52 em Y304, sem bater em nada.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
