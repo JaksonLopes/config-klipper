@@ -971,6 +971,29 @@ escova antiga, provisória). Posição física medida: `Y304`, varrendo de `X52`
   (ou deixar rodar no próximo `PRINT_START`) e confirmar visualmente que o bico realmente
   encosta na escova nova ao longo do trecho X15-52 em Y304, sem bater em nada.
 
+### 32. Bico encostando na mesa durante Z_TILT_ADJUST/homing - `descend_z` apertado (2026-09-23)
+Usuário relatou (problema antigo, não recente) que o bico encosta na mesa e deposita
+material derretido durante `Z_TILT_ADJUST`/home do Z — mesmo a sonda sendo sem contato
+(BTT Eddy). Minha primeira hipótese (calibração desatualizada por causa da desmontagem
+recente da cabeça) **estava errada** — o usuário confirmou que isso já acontecia desde
+antes. Causa real, confirmada na documentação oficial do Klipper:
+
+- **`descend_z`** (`toolhead.cfg`, `[probe_eddy_current btt_eddy]`) — parâmetro que
+  define "a distância nominal entre o bico e a mesa em que uma sondagem deve parar".
+  Vale pra **toda sondagem que usa essa sonda** (home do Z, `Z_TILT_ADJUST`, malha da
+  mesa) porque é um valor único do objeto da sonda, não por operação.
+- Estava em `0.5mm` — apertado demais pra uma sonda sem contato; qualquer folga
+  mecânica/variação térmica pequena já é suficiente pra encostar de verdade.
+- **Corrigido:** `descend_z: 0.5 → 2.0mm`.
+- **Nota separada (não é a causa deste problema, mas ainda vale considerar):** como a
+  cabeça foi desmontada recentemente (item anterior), a tabela de calibração
+  frequência→distância da sonda pode estar um pouco desatualizada de qualquer forma.
+  Rodar `PROBE_EDDY_CURRENT_CALIBRATE_AUTO` (já existe pronta em `toolhead.cfg`) em
+  algum momento é uma boa prática depois de mexer fisicamente na cabeça, mas não é o
+  que estava causando o toque na mesa.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, testar `Z_TILT_ADJUST` (ou
+  simplesmente `PRINT_START`) e confirmar que o bico não encosta mais na mesa.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
