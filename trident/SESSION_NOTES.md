@@ -994,6 +994,38 @@ antes. Causa real, confirmada na documentação oficial do Klipper:
 - **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, testar `Z_TILT_ADJUST` (ou
   simplesmente `PRINT_START`) e confirmar que o bico não encosta mais na mesa.
 
+### 33. Cores trocadas numa impressão multi-cor - preprocessador do Moonraker estourando timeout (2026-10-01)
+Usuário reportou uma impressão de 4 cores que começou certa e foi "enlouquecendo" as
+cores no meio (cabelo que devia ser marrom saiu branco, roupa branca saiu preta, etc).
+
+- **Não era bug do MMU/config da impressora** — conferido no `mmu.log`: o mapa
+  ferramenta→gate (T0→gate0, T1→gate1, T2→gate2) ficou estável a impressão inteira, sem
+  nenhuma troca automática/EndlessSpool no meio.
+- **Causa raiz encontrada no próprio `.gcode`:** o "Start G-code" customizado no Orca
+  (bloco "--- START G-CODE OFICIAL HAPPY HARE ---") usa `MMU_START_SETUP` com
+  placeholders tipo `!colors!`, `!temperatures!`, `!materials!`, `!total_toolchanges!`,
+  `!referenced_tools!`, `!filament_names!`, `!purge_volumes!` — esses **não são
+  placeholders nativos do Orca** (diferente de `{initial_tool}`/`{total_layer_count}`,
+  que são e funcionam normal). Eles dependem de um **pré-processador do próprio
+  Moonraker** (`[mmu_server] enable_file_preprocessor`) que escaneia o arquivo depois do
+  upload e substitui esses tokens pelos valores reais.
+- Esse pré-processador **já estava habilitado** no `moonraker.conf`
+  (`enable_file_preprocessor: True`) — não era isso. O problema real: **o Moonraker tem
+  um timeout padrão de só 20 segundos** pra esse processamento (documentado no wiki
+  oficial do Happy Hare), e pra um gcode grande (essa impressão tinha 158 camadas, 6h10)
+  o processamento estourava esse tempo e **falhava silenciosamente**, deixando os
+  placeholders sem substituir — o Happy Hare recebeu literalmente a string `"!colors!"`
+  em vez das cores de verdade, e sem essa informação não conseguiu validar/estabelecer
+  direito qual cor ia em qual gate pra essa impressão específica.
+- **Correção em `moonraker.conf`:** adicionada seção `[file_manager]` com
+  `default_metadata_parser_timeout: 120` (padrão era 20s).
+- **⚠️ PENDENTE (ação do usuário):** depois do `git pull` + **reiniciar o Moonraker**
+  (não é `RESTART` do Klipper, é o serviço `moonraker-Trident` mesmo — pode reiniciar
+  pelo Mainsail em Configurações → Reiniciar Moonraker, ou `sudo systemctl restart
+  moonraker-Trident` via SSH), **fatiar de novo e fazer um upload novo** do gcode (o
+  pré-processamento só roda no momento do upload, não ao reimprimir um arquivo já
+  carregado antes da correção). Confirmar visualmente que as cores saem certas dessa vez.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
