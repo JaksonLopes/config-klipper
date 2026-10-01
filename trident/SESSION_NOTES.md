@@ -1148,6 +1148,23 @@ Teste real da correção do item 35: resolveu em parte, mas o servo ainda é rá
 - **⚠️ PENDENTE:** testar `MMU_SELECT GATE=...` entre gates distantes. Se continuar
   batendo, baixar `SERVO_SPEED` (60, 40); se o servo ficar mole/errar posição, subir.
 
+### 38. Mexida da engrenagem durante o giro do servo (2026-10-01)
+O seletor é um came: para ir de um gate a outro o servo varre as posições intermediárias, e
+a mexida só acontecia depois de chegar ao gate final (dava tempo de travar no meio do caminho).
+- `servo_gear_buzz.py`: durante a rampa do servo (item 37), a cada `sweep_buzz_degrees`
+  (12°) de curso, faz um ciclo +/-`buzz_distance` na engrenagem; só ao engatar (grip), nunca
+  na soltura. A mexida do fim (`buzz_count`) continua. Só funciona com `servo_speed > 0`
+  (é a rampa que abre espaço para intercalar as mexidas).
+- Ajuste ao vivo: `SERVO_GEAR_BUZZ SWEEP=8` (menor = mais mexidas; 0 = só no fim).
+  `SERVO_GEAR_BUZZ` sem parâmetros mostra também quantas mexidas durante o giro já ocorreram.
+- Simulado: de 90° a 0° saem 7 ciclos no meio do giro + 3 no fim; nenhuma na soltura.
+- **Não testado no hardware.** Incerteza: se os movimentos da engrenagem acompanham o tempo
+  dos passos do servo (as mexidas ficam enfileiradas no motor de arrasto e podem atrasar um
+  pouco em relação ao giro). Se aparecer ruído/atraso estranho, `SWEEP=0` desliga isso.
+- Instalar: `git pull`, `sudo systemctl restart klipper-Trident`.
+- `servo_speed` ajustado de 90 para **120°/s** (90° de giro ≈ 0,9s) — a 90°/s o usuário achou
+  um pouco lento. Valor define a velocidade do giro; maior = mais rápido.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`

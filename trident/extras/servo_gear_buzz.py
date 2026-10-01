@@ -17,15 +17,18 @@ class ServoGearBuzz:
         self.speed = config.getfloat('buzz_speed', 25., above=0., maxval=100.)
         self.servo_speed = config.getfloat('servo_speed', 0., minval=0., maxval=1000.)
         self.servo_step = config.getfloat('servo_step', 3., above=0.5, maxval=30.)
+        self.sweep_buzz_degrees = config.getfloat('sweep_buzz_degrees', 0., minval=0., maxval=180.)
         self.status = "não inicializado"
         self.buzz_total = 0
+        self.sweep_total = 0
+        self._in_grip = False
         self._move_ok = None
         self.printer.register_event_handler("klippy:connect", self._handle_connect)
         gcode = self.printer.lookup_object('gcode')
         gcode.register_command('SERVO_GEAR_BUZZ', self.cmd_SERVO_GEAR_BUZZ,
                                desc="Mostra/ajusta a mexida da engrenagem e a velocidade do servo. "
                                     "Uso: SERVO_GEAR_BUZZ [COUNT=n] [DISTANCE=mm] [SPEED=mm/s] "
-                                    "[SERVO_SPEED=graus/s, 0=máxima]")
+                                    "[SERVO_SPEED=graus/s, 0=máxima] [SWEEP=graus entre mexidas, 0=só no fim]")
 
     # --- Localização e patch da classe ---------------------------------------------------
 
@@ -58,7 +61,10 @@ class ServoGearBuzz:
 
     def _status_text(self):
         slow = ("servo a %.0f°/s" % self.servo_speed) if self.servo_speed > 0 else "servo em velocidade máxima"
-        return "ativo (%d x +/-%.2fmm a %.0fmm/s; %s)" % (self.count, self.distance, self.speed, slow)
+        sweep = (", mexe a cada %.0f° do giro" % self.sweep_buzz_degrees
+                 if self.servo_speed > 0 and self.sweep_buzz_degrees > 0 else "")
+        return "ativo (%d x +/-%.2fmm a %.0fmm/s; %s%s)" % (self.count, self.distance, self.speed,
+                                                            slow, sweep)
 
     @staticmethod
     def _patch(cls):
@@ -85,9 +91,13 @@ class ServoGearBuzz:
                 except Exception:
                     logging.exception("servo_gear_buzz: falha ao preparar a mexida (ignorado)")
                     restore = None
+            if owner is not None:
+                owner._in_grip = not release
             try:
                 return orig_grip(sel, lgate, release=release)
             finally:
+                if owner is not None:
+                    owner._in_grip = False
                 if restore is not None:
                     restore()
 
@@ -112,11 +122,25 @@ class ServoGearBuzz:
         period = 0.02  # período do sinal PWM do servo
         step_time = max(period, math.ceil(delta / self.servo_speed / n / period) * period)
         always_active = bool(getattr(sel.p, 'servo_always_active', 0))
+        # Mexe a engrenagem durante o giro (só ao engatar), a cada sweep_buzz_degrees de curso
+        sweep = (self._in_grip and self.sweep_buzz_degrees > 0 and self.count > 0
+                 and self._move_supported(mmu))
+        enc_start = mmu.get_encoder_distance(dwell=None) if sweep else None
+        traveled = 0.
+        wiggles = 0
         mmu.movequeue_wait()
         for i in range(1, n):
             sel.servo.set_position(angle=start + (angle - start) * i / n,
                                    duration=None if always_active else step_time)
             mmu.movequeue_dwell(step_time)
+            traveled += delta / n
+            if sweep and traveled >= self.sweep_buzz_degrees:
+                traveled = 0.
+                if self._wiggle(sel, mmu, 1):
+                    wiggles += 1
+        if wiggles:
+            mmu.set_encoder_distance(enc_start, dwell=None)
+            self.sweep_total += wiggles
 
     # --- Lógica da mexida ----------------------------------------------------------------
 
@@ -168,15 +192,23 @@ class ServoGearBuzz:
                 logging.warning("servo_gear_buzz: %s", self.status)
         return self._move_ok
 
-    def _buzz(self, sel, mmu):
+    def _wiggle(self, sel, mmu, cycles):
         try:
             accel = getattr(getattr(sel.mmu_unit, 'p', None), 'gear_buzz_accel', 1000.)
-            enc_start = mmu.get_encoder_distance(dwell=None)
-            for _ in range(self.count):
+            for _ in range(cycles):
                 for dist in (self.distance, -self.distance):
                     mmu.move_filament(None, dist, speed=self.speed, accel=accel,
                                       encoder_dwell=None, speed_override=False,
                                       suppress_grip_change=True)
+            return True
+        except Exception:
+            logging.exception("servo_gear_buzz: falha na mexida (ignorado)")
+            return False
+
+    def _buzz(self, sel, mmu):
+        try:
+            enc_start = mmu.get_encoder_distance(dwell=None)
+            self._wiggle(sel, mmu, self.count)
             mmu.set_encoder_distance(enc_start, dwell=None)
             self.buzz_total += 1
             if hasattr(mmu, 'log_debug'):
@@ -192,10 +224,11 @@ class ServoGearBuzz:
         self.distance = gcmd.get_float('DISTANCE', self.distance, above=0., maxval=3.)
         self.speed = gcmd.get_float('SPEED', self.speed, above=0., maxval=100.)
         self.servo_speed = gcmd.get_float('SERVO_SPEED', self.servo_speed, minval=0., maxval=1000.)
+        self.sweep_buzz_degrees = gcmd.get_float('SWEEP', self.sweep_buzz_degrees, minval=0., maxval=180.)
         if self.status.startswith("ativo"):
             self.status = self._status_text()
-        gcmd.respond_info("servo_gear_buzz: %s - engates com mexida desde o restart: %d"
-                          % (self.status, self.buzz_total))
+        gcmd.respond_info("servo_gear_buzz: %s - engates com mexida: %d, mexidas durante o giro: %d"
+                          % (self.status, self.buzz_total, self.sweep_total))
 
 
 def load_config(config):
