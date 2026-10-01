@@ -1047,6 +1047,24 @@ feedback físico de posição) assentou na posição errada mesmo recebendo o co
   errado. Se persistir mesmo com a folga extra de tempo, o problema é mecânico de
   verdade e precisa de reparo/ajuste físico no mecanismo do seletor.
 
+**Causa raiz real, identificada pelo usuário no mesmo dia:** não era só a portinha —
+quando o servo desce pra engatar as engrenagens tipo BMG (pressionar o filamento), se as
+duas engrenagens estiverem **paradas** no momento do engate, pode acontecer de um dente
+"casar" exatamente em cima do outro (ponta com ponta) em vez de encaixar no vão — travando
+o encaixe e fazendo o servo forçar/patinar. Confirmado como problema **conhecido e
+documentado** da comunidade Happy Hare/ERCF, com solução oficial pronta:
+
+- **Correção em `mmu/base/mmu_parameters_unit0.cfg`:** adicionado
+  `servo_buzz_gear_on_down: 3` — faz a engrenagem "chacoalhar" (girar um pouquinho pra lá
+  e pra cá) bem na hora que o servo está descendo pra engatar, assim mesmo que os dentes
+  se encontrem errado no primeiro instante, a vibração ajuda eles a se acomodarem no
+  lugar certo rapidinho. Valor recomendado pela doc oficial é 3-5 "chacoalhadas".
+- **Nunca esteve configurado** (nem na v3, nem na v4) — não é perda de migração, é algo
+  que sempre faltou desde a instalação original da MMX, e só foi identificado agora.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, testar várias trocas de gate
+  seguidas (principalmente com as duas engrenagens paradas, que é o cenário do bug) e
+  confirmar que não trava/patina mais. Se `3` não for suficiente, pode subir até uns 5.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
