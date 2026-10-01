@@ -1054,16 +1054,26 @@ duas engrenagens estiverem **paradas** no momento do engate, pode acontecer de u
 o encaixe e fazendo o servo forçar/patinar. Confirmado como problema **conhecido e
 documentado** da comunidade Happy Hare/ERCF, com solução oficial pronta:
 
-- **Correção em `mmu/base/mmu_parameters_unit0.cfg`:** adicionado
+- **Tentativa em `mmu/base/mmu_parameters_unit0.cfg`:** adicionado
   `servo_buzz_gear_on_down: 3` — faz a engrenagem "chacoalhar" (girar um pouquinho pra lá
-  e pra cá) bem na hora que o servo está descendo pra engatar, assim mesmo que os dentes
-  se encontrem errado no primeiro instante, a vibração ajuda eles a se acomodarem no
-  lugar certo rapidinho. Valor recomendado pela doc oficial é 3-5 "chacoalhadas".
-- **Nunca esteve configurado** (nem na v3, nem na v4) — não é perda de migração, é algo
-  que sempre faltou desde a instalação original da MMX, e só foi identificado agora.
-- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, testar várias trocas de gate
-  seguidas (principalmente com as duas engrenagens paradas, que é o cenário do bug) e
-  confirmar que não trava/patina mais. Se `3` não for suficiente, pode subir até uns 5.
+  e pra cá, +0.8mm/-0.8mm por ciclo, confirmado no código-fonte do Happy Hare) bem na
+  hora que o servo está descendo pra engatar, assim mesmo que os dentes se encontrem
+  errado no primeiro instante, a vibração ajuda eles a se acomodarem no lugar certo
+  rapidinho. Valor padrão de fábrica das versões recentes do Happy Hare é `3` (faixa
+  válida 0-10).
+- **❌ REVERTIDO no mesmo dia — quebrou a impressora:** o Klipper recusou o parâmetro
+  (`Option 'servo_buzz_gear_on_down' is not valid in section 'mmu_unit_parameters
+  unit0'`, impressora ficou em estado "halted"). Confirma que a **versão do Happy Hare
+  atualmente instalada é mais antiga que a versão em que esse parâmetro foi introduzido**
+  — não é erro de digitação/seção, o recurso simplesmente não existe ainda nesta
+  instalação. Comentado no arquivo (não apagado) com nota explicando o motivo.
+- **Nunca esteve configurado antes** (nem na v3, nem na v4) — não é perda de migração.
+- **⚠️ PENDENTE (ação do usuário):** **atualizar o Happy Hare primeiro** (v4.0.0-1443 →
+  v1535, já discutido antes — essa é uma razão concreta a mais pra fazer essa
+  atualização) e só depois descomentar `servo_buzz_gear_on_down: 3` neste arquivo e
+  testar de novo. Antes disso, continuar confiando só no conserto físico da portinha +
+  `servo_duration`/`servo_dwell` aumentados (ainda ativos, esses dois já eram parâmetros
+  reconhecidos pela versão atual).
 
 ## Checklist de pendências pro usuário confirmar
 
