@@ -1117,6 +1117,19 @@ sudo systemctl restart klipper-Trident
   engrenagem tremer no engate; depois de algumas trocas, `SERVO_GEAR_BUZZ` deve mostrar o
   contador subindo. Se aparecer `DESATIVADO`, mandar o `klippy.log`.
 
+### 36. Automap de cores por gate (2026-10-01)
+Gates ficavam cinza (cor desconhecida) e as ferramentas do fatiador não eram casadas com a
+cor real dos filamentos (`MMU_SLICER_TOOL_MAP ... AUTOMAP=none`).
+- `mmu_macro_vars.cfg`: `variable_automap_strategy: 'none' → 'closest_color'` — o
+  `MMU_START_SETUP` passa a ajustar o TTG map pelo gate cuja cor cadastrada é mais próxima
+  da cor pedida pelo Orca (todos os filamentos têm o mesmo nome/material, então só a cor
+  diferencia).
+- Depende de cada gate ter COR cadastrada (`MMU_GATE_MAP GATE=n COLOR=RRGGBB`). O
+  `MMU_EJECT` limpa o cadastro do gate ("Clearing gate map"), então a cor precisa ser
+  refeita ao trocar o carretel, não a cada impressão.
+- **⚠️ PENDENTE:** cadastrar as cores dos 4 gates, subir/aplicar, testar com a impressão de
+  4 cores e conferir no log (`Slicer MMU Tool Summary`) o gate escolhido para cada T.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
