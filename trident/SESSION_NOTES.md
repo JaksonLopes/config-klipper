@@ -1130,6 +1130,24 @@ cor real dos filamentos (`MMU_SLICER_TOOL_MAP ... AUTOMAP=none`).
 - **⚠️ PENDENTE:** cadastrar as cores dos 4 gates, subir/aplicar, testar com a impressão de
   4 cores e conferir no log (`Slicer MMU Tool Summary`) o gate escolhido para cada T.
 
+### 37. Ajuste do `servo_gear_buzz`: mexida de 1mm e servo mais lento (2026-10-01)
+Teste real da correção do item 35: resolveu em parte, mas o servo ainda é rápido demais e
+às vezes dá pancada/barulho no engate.
+- `buzz_distance: 0.8 → 1.0` (mm de cada lado, em `servo_gear_buzz.cfg`).
+- **Velocidade do servo:** o `mmu_servo` do Happy Hare não tem controle de velocidade (manda o
+  ângulo final e o servo vai na velocidade máxima). O módulo agora divide o movimento em passos
+  de `servo_step` graus (3°) com rajadas PWM curtas, a `servo_speed` graus/s (90°/s → um
+  movimento de 90° leva ~1,2s). `servo_speed: 0` volta à velocidade máxima. Os passos
+  intermediários rodam antes do movimento final original, que continua fazendo o último
+  passo, a mexida da engrenagem e a espera.
+- Ajuste ao vivo: `SERVO_GEAR_BUZZ SERVO_SPEED=60 DISTANCE=1.0` (sem parâmetro só mostra o
+  status). Persistir o valor bom editando `servo_gear_buzz.cfg`.
+- Simulado localmente (30 passos de 3°, ordem rampa → servo final → mexida → espera). **Não
+  testado no hardware:** a suavização é aproximada (o servo recebe só rajadas curtas).
+- Como o `.py` mudou: no Pi, `sudo systemctl restart klipper-Trident` (o `RESTART` não recarrega).
+- **⚠️ PENDENTE:** testar `MMU_SELECT GATE=...` entre gates distantes. Se continuar
+  batendo, baixar `SERVO_SPEED` (60, 40); se o servo ficar mole/errar posição, subir.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`

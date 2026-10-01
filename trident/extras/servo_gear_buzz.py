@@ -3,6 +3,7 @@
 # Instalação e contexto: trident/SESSION_NOTES.md (item 35).
 import inspect
 import logging
+import math
 import sys
 
 _MISSING = object()
@@ -14,14 +15,17 @@ class ServoGearBuzz:
         self.count = config.getint('buzz_count', 3, minval=0, maxval=10)
         self.distance = config.getfloat('buzz_distance', 0.8, above=0., maxval=3.)
         self.speed = config.getfloat('buzz_speed', 25., above=0., maxval=100.)
+        self.servo_speed = config.getfloat('servo_speed', 0., minval=0., maxval=1000.)
+        self.servo_step = config.getfloat('servo_step', 3., above=0.5, maxval=30.)
         self.status = "não inicializado"
         self.buzz_total = 0
         self._move_ok = None
         self.printer.register_event_handler("klippy:connect", self._handle_connect)
         gcode = self.printer.lookup_object('gcode')
         gcode.register_command('SERVO_GEAR_BUZZ', self.cmd_SERVO_GEAR_BUZZ,
-                               desc="Mostra/ajusta a mexida da engrenagem no engate do servo. "
-                                    "Uso: SERVO_GEAR_BUZZ [COUNT=n] [DISTANCE=mm] [SPEED=mm/s]")
+                               desc="Mostra/ajusta a mexida da engrenagem e a velocidade do servo. "
+                                    "Uso: SERVO_GEAR_BUZZ [COUNT=n] [DISTANCE=mm] [SPEED=mm/s] "
+                                    "[SERVO_SPEED=graus/s, 0=máxima]")
 
     # --- Localização e patch da classe ---------------------------------------------------
 
@@ -49,12 +53,28 @@ class ServoGearBuzz:
         if not getattr(cls, '_sgb_patched', False):
             self._patch(cls)
             cls._sgb_patched = True
-        self.status = "ativo (%d x +/-%.2fmm a %.0fmm/s)" % (self.count, self.distance, self.speed)
+        self.status = self._status_text()
         logging.info("servo_gear_buzz: %s", self.status)
+
+    def _status_text(self):
+        slow = ("servo a %.0f°/s" % self.servo_speed) if self.servo_speed > 0 else "servo em velocidade máxima"
+        return "ativo (%d x +/-%.2fmm a %.0fmm/s; %s)" % (self.count, self.distance, self.speed, slow)
 
     @staticmethod
     def _patch(cls):
         orig_grip = cls._grip_release
+        orig_set = cls._set_servo_angle
+
+        def _set_servo_angle(sel, angle):
+            owner = getattr(cls, '_sgb_owner', None)
+            if owner is not None and owner.servo_speed > 0:
+                try:
+                    owner._ramp(sel, angle)
+                except Exception:
+                    logging.exception("servo_gear_buzz: falha ao suavizar o servo (ignorado)")
+            return orig_set(sel, angle)
+
+        cls._set_servo_angle = _set_servo_angle
 
         def _grip_release(sel, lgate, release=False):
             owner = getattr(cls, '_sgb_owner', None)
@@ -72,6 +92,31 @@ class ServoGearBuzz:
                     restore()
 
         cls._grip_release = _grip_release
+
+    # --- Servo mais lento ----------------------------------------------------------------
+
+    def _ramp(self, sel, angle):
+        """Passos intermediários curtos antes do movimento final (o original ainda faz o
+        último passo, o tempo de espera e a atualização do estado). O servo só tem 'ir pro
+        ângulo', então a velocidade é simulada subindo o ângulo aos poucos."""
+        if angle < 0 or angle == sel.servo_angle:
+            return
+        mmu = getattr(sel, 'mmu', None)
+        if mmu is None or getattr(mmu, '_is_running_test', False):
+            return
+        start = sel.servo_angle
+        delta = abs(angle - start)
+        if delta <= self.servo_step:
+            return
+        n = int(math.ceil(delta / self.servo_step))
+        period = 0.02  # período do sinal PWM do servo
+        step_time = max(period, math.ceil(delta / self.servo_speed / n / period) * period)
+        always_active = bool(getattr(sel.p, 'servo_always_active', 0))
+        mmu.movequeue_wait()
+        for i in range(1, n):
+            sel.servo.set_position(angle=start + (angle - start) * i / n,
+                                   duration=None if always_active else step_time)
+            mmu.movequeue_dwell(step_time)
 
     # --- Lógica da mexida ----------------------------------------------------------------
 
@@ -146,8 +191,9 @@ class ServoGearBuzz:
         self.count = gcmd.get_int('COUNT', self.count, minval=0, maxval=10)
         self.distance = gcmd.get_float('DISTANCE', self.distance, above=0., maxval=3.)
         self.speed = gcmd.get_float('SPEED', self.speed, above=0., maxval=100.)
+        self.servo_speed = gcmd.get_float('SERVO_SPEED', self.servo_speed, minval=0., maxval=1000.)
         if self.status.startswith("ativo"):
-            self.status = "ativo (%d x +/-%.2fmm a %.0fmm/s)" % (self.count, self.distance, self.speed)
+            self.status = self._status_text()
         gcmd.respond_info("servo_gear_buzz: %s - engates com mexida desde o restart: %d"
                           % (self.status, self.buzz_total))
 
