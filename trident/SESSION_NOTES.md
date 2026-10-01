@@ -1026,6 +1026,27 @@ cores no meio (cabelo que devia ser marrom saiu branco, roupa branca saiu preta,
   pré-processamento só roda no momento do upload, não ao reimprimir um arquivo já
   carregado antes da correção). Confirmar visualmente que as cores saem certas dessa vez.
 
+### 34. Gate errado selecionado por emperramento físico no seletor servo (2026-10-01)
+Impressão saiu com a cor errada (devia começar com marrom/T1/gate1, saiu branco) mesmo
+com todo o mapeamento TTG/slicer confirmado correto no log (`MMU_SLICER_TOOL_MAP TOOL=1
+COLOR=804040`, `Selecting tool T1 on gate 1`, `Tool T1 enabled`). Usuário investigou
+fisicamente e achou a causa: uma portinha do seletor emperrou, e o servo (sem nenhum
+feedback físico de posição) assentou na posição errada mesmo recebendo o comando certo.
+
+- **Confirmado: é um problema conhecido da comunidade Happy Hare**, não bug de config —
+  o seletor da MMX é um servo PWM "cego" (sem hard-stop nem sensor de confirmação), então
+  qualquer atrito mecânico leve pode fazer ele assentar errado sem avisar ninguém.
+- **Ação física (usuário, fora deste repo):** limpar/lubrificar a portinha que emperrou,
+  depois rodar `MMU_CALIBRATE_SELECTOR` pra recalibrar os ângulos com precisão.
+- **Correção em `mmu/base/mmu_parameters_unit0.cfg`** (mitigação extra, não substitui o
+  conserto físico):
+  - `servo_duration: 0.6 → 0.8` (mais tempo de sinal PWM pra vencer resistência leve)
+  - `servo_dwell: 1.0 → 1.5` (mais tempo de espera antes do próximo movimento)
+- **⚠️ PENDENTE (ação do usuário):** fazer a manutenção física da portinha, recalibrar o
+  seletor, e testar algumas trocas de gate pra confirmar que não volta a selecionar
+  errado. Se persistir mesmo com a folga extra de tempo, o problema é mecânico de
+  verdade e precisa de reparo/ajuste físico no mecanismo do seletor.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
