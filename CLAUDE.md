@@ -48,6 +48,10 @@ cada uma tem hardware e problemas próprios.
   aqui, checar se o conteúdo faz sentido como config de verdade — se for só uma linha
   com um caminho, é um symlink, e a edição de verdade precisa ser feita direto no Pi (ou
   no projeto de onde o link aponta, como o Happy-Hare).
+- A Trident usa um módulo Klipper próprio, `trident/extras/servo_gear_buzz.py`, que precisa
+  de um link em `~/klipper/klippy/extras/servo_gear_buzz.py` (comando no item 35 de
+  `trident/SESSION_NOTES.md`). Se o Klipper/Pi for reinstalado e o link sumir, a Trident
+  para com erro de seção `[servo_gear_buzz]` inválida — basta recriar o link.
 
 ## Acesso de rede ao Pi (IPs e portas)
 

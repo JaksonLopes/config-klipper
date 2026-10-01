@@ -1068,12 +1068,54 @@ documentado** da comunidade Happy Hare/ERCF, com solução oficial pronta:
   — não é erro de digitação/seção, o recurso simplesmente não existe ainda nesta
   instalação. Comentado no arquivo (não apagado) com nota explicando o motivo.
 - **Nunca esteve configurado antes** (nem na v3, nem na v4) — não é perda de migração.
-- **⚠️ PENDENTE (ação do usuário):** **atualizar o Happy Hare primeiro** (v4.0.0-1443 →
-  v1535, já discutido antes — essa é uma razão concreta a mais pra fazer essa
-  atualização) e só depois descomentar `servo_buzz_gear_on_down: 3` neste arquivo e
-  testar de novo. Antes disso, continuar confiando só no conserto físico da portinha +
-  `servo_duration`/`servo_dwell` aumentados (ainda ativos, esses dois já eram parâmetros
-  reconhecidos pela versão atual).
+- **Conclusão acima estava errada (corrigida no item 35):** não era versão — o parâmetro
+  só existe na classe `LinearServoSelector`, nunca na `ServoSelector` usada pela MMX.
+
+### 35. Módulo próprio `servo_gear_buzz` - mexida da engrenagem no engate do servo (2026-10-01)
+O problema do item 34 (engrenagens paradas engatando dente-com-dente, servo patinando e
+acumulando erro até selecionar o gate errado, sem o Klipper detectar) estava impedindo
+impressões coloridas (uma tinha 200+ trocas). Lendo o código-fonte do Happy Hare (`main`):
+
+- `selector_type: ServoSelector` (classe oficial da MMX/PicoMMU) faz o engate em
+  `_grip_release()` → `_set_servo_angle()`, que só manda o servo e espera
+  (`movequeue_dwell`). Não mexe a engrenagem.
+- A classe `LinearServoSelector` tem `servo_buzz_gear_on_down`: manda o servo e, **antes**
+  da espera, enfileira `move_filament(+0.8)` / `move_filament(-0.8)` N vezes com
+  `suppress_grip_change=True` e `accel=gear_buzz_accel`, preservando a distância do
+  encoder. Por isso a engrenagem gira enquanto o servo ainda está descendo.
+- Todas essas funções são do controlador central/unidade, então também existem pra
+  `ServoSelector`. Trocar o `selector_type` não funciona (a `LinearServoSelector` espera
+  um motor de seletor linear que a MMX não tem).
+
+**Solução:** módulo Klipper próprio, `trident/extras/servo_gear_buzz.py` (seção
+`[servo_gear_buzz]` em `trident/servo_gear_buzz.cfg`, incluída no `printer.cfg`):
+- Envolve `ServoSelector._grip_release` só no engate (não na soltura). Quando o servo vai
+  mudar de ângulo, instala um gancho de uso único no `movequeue_dwell` do controlador que
+  roda a mesma sequência de mexidas oficial entre o comando do servo e a espera.
+- Não altera nenhum arquivo do Happy Hare (atualizações dele não apagam a correção).
+- Defensivo: se a classe/funções não existirem na versão instalada, desativa a mexida e
+  registra aviso no `klippy.log`, sem travar nada. Sem recursão (exige
+  `suppress_grip_change`), não roda em comandos de teste, não aplica patch duas vezes após
+  `RESTART`.
+- Simulado localmente com cópia da lógica do `ServoSelector`: ordem confirmada
+  `servo → mexidas → espera`.
+- `buzz_count: 5`, `buzz_distance: 0.8`, `buzz_speed: 25`. Ajuste ao vivo:
+  `SERVO_GEAR_BUZZ COUNT=n DISTANCE=mm SPEED=mm/s` (sem parâmetro, só mostra o status e
+  quantos engates tiveram mexida desde o restart).
+
+**Instalação no Pi (uma vez, e de novo se o Pi/Klipper for reinstalado):**
+```
+cd ~/klipper_backups && git pull --rebase origin main
+ln -sf /home/biqu/printer_Trident_data/config/extras/servo_gear_buzz.py /home/biqu/klipper/klippy/extras/servo_gear_buzz.py
+sudo systemctl restart klipper-Trident
+```
+(`RESTART` pelo console não recarrega um módulo Python novo/alterado — usar o
+`systemctl restart` sempre que o `.py` mudar.)
+
+- **⚠️ PENDENTE (ação do usuário):** depois de instalar, rodar `SERVO_GEAR_BUZZ` no console
+  e confirmar `ativo (5 x +/-0.80mm a 25mm/s)`. Fazer várias trocas de gate e olhar a
+  engrenagem tremer no engate; depois de algumas trocas, `SERVO_GEAR_BUZZ` deve mostrar o
+  contador subindo. Se aparecer `DESATIVADO`, mandar o `klippy.log`.
 
 ## Checklist de pendências pro usuário confirmar
 
