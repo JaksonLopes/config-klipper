@@ -2,7 +2,7 @@
 
 > Documento de contexto para futuras sessões. Resume o que foi diagnosticado e corrigido,
 > o que ficou pendente, e armadilhas conhecidas desse setup específico.
-> Última atualização: sessão de 2026-08-02.
+> Última atualização: sessão de 2026-10-07 (itens 39-41: automap, bypass, tap da Eddy, shaper).
 >
 > Ver também [`CLAUDE.md`](../CLAUDE.md) na raiz do repositório: idioma padrão
 > (sempre português) e cuidados gerais válidos pra qualquer impressora deste Pi
@@ -1164,6 +1164,78 @@ a mexida só acontecia depois de chegar ao gate final (dava tempo de travar no m
 - Instalar: `git pull`, `sudo systemctl restart klipper-Trident`.
 - `servo_speed` ajustado de 90 para **120°/s** (90° de giro ≈ 0,9s) — a 90°/s o usuário achou
   um pouco lento. Valor define a velocidade do giro; maior = mais rápido.
+
+### 39. Automap desativado e comportamento do bypass (2026-10-04/05)
+- **Automap:** `variable_automap_strategy` voltou de `'closest_color'` para **`'none'`**
+  (`mmu_macro_vars.cfg`). Com `closest_color` todo print pausava com "Error during automapping
+  ... Available are: ['', '', '', '']" quando o mapa de gates estava vazio (material/cor não
+  cadastrados). Com `'none'` T0..T3 vão direto para os gates 0..3 (o item 36 fica só como
+  histórico). Os cadastros de cor/material continuam servindo para exibição.
+- **Bypass:** o `MMU_END` descarrega a ferramenta no fim do print enquanto
+  `variable_unload_tool: True` (também no bypass), e o estado "bypass carregado" não é salvo
+  entre prints nem entre restarts. Para imprimir pelo bypass é preciso
+  `MMU_RECOVER TOOL=-2 LOADED=1` (ou `MMU_SELECT BYPASS=1` + `MMU_LOAD`). "Operation not
+  possible because bypass angle is not configured" é inofensivo (`servo_bypass_angle: -1`).
+- **⚠️ PENDENTE (decisão):** deixar o filamento do bypass no bico ao fim do print (macro antes
+  do `MMU_END` desligando `unload_tool` quando `printer.mmu.tool == -2`, precisa do End G-code
+  do Orca) ou `variable_unload_tool: False` para tudo.
+
+### 40. Z-offset: referência de Z pelo contato do bico (tap da Eddy) (2026-10-06)
+**Diagnóstico:** o usuário ajustava o Z-offset na mão a cada print. O `PROBE_EDDY_CURRENT_TAP_CALIBRATE`
+mostrou que o Z=0 do homing por frequência estava **~0,045 mm acima da mesa** (contato em
+Z=-0,0445; 5 amostras entre -0,0377 e -0,0503). A calibração por folha de papel deixa ~0,05-0,1 mm
+de folga; o tap mede o contato real e não deriva com a temperatura.
+- Klipper v0.13.0-786 (30/09/2026) já tem tap (`tap_threshold` aparece 27x no
+  `probe_eddy_current.py`). `tap_threshold: 3574.741` gravado pelo `SAVE_CONFIG` (bloco do
+  `printer.cfg`). `position_min: -2` do `stepper_z` já permitia o contato.
+- `macros.cfg`: `AJUSTAR_Z_TAP` (tap no ponto X150 Y125 = sonda em `zero_reference_position`
+  150,150; recusa bico >175C e contato fora de ±0,3 mm) + `_AJUSTAR_Z_TAP_APLICA` (parte 2
+  separada porque o Jinja só enxerga o resultado do `PROBE` depois que ele roda; corrige com
+  `SET_KINEMATIC_POSITION Z = z_atual - contato`). Lê `printer.probe.last_probe_position.z`
+  (o `last_z_result` está deprecated). Tap com `SAMPLES=3 SAMPLES_TOLERANCE=0.02
+  SAMPLES_TOLERANCE_RETRIES=2 SAMPLES_RESULT=median`.
+- `PRINT_START`: home, mesa, `LIMPAR_BICO` com bico a **150C**, `Z_TILT_ADJUST`, `G28 Z`,
+  `SET_GCODE_OFFSET Z=0`, `AJUSTAR_Z_TAP`, **malha `rapid_scan` ainda a 150C**, só então aquece o
+  bico até a temperatura de impressão e limpa de novo.
+- `tap_z_offset` (`toolhead.cfg`, `[probe_eddy_current btt_eddy]`) compensa a dilatação do bico
+  entre o tap (150C) e a impressão (~240C). **Negativo sobe o bico.** Primeira camada saiu baixa/
+  rugosa com 0; -0,05 ainda baixa; o usuário ajustou para **-0,09** direto no Pi.
+- Testado: `AJUSTAR_Z_TAP` corrige em +0,0406; segunda rodada dá +0,0015 (≈0); `PRINT_START`
+  roda sem erro.
+- Para ajustar fino sem editar arquivo: baby step na primeira camada, depois
+  `Z_OFFSET_APPLY_PROBE METHOD=tap` + `SAVE_CONFIG` (tirar antes a linha `tap_z_offset` do
+  `toolhead.cfg`, senão o Klipper reclama de duplicata).
+
+### 41. Revisão geral de melhorias + Bloco A + input shaper (2026-10-07)
+Pesquisa em 4 frentes (Klipper/Eddy, boas práticas Trident/Eddy Duo, qualidade de impressão,
+Pi/CAN/Moonraker/Happy Hare). **Encoder Binky foi removido em 12/09 e o FlowGuard está em 0**
+(um dos relatórios assumiu o contrário — descartado).
+- **Bloco A aplicado:** `max_z_velocity` 5→15 e `max_z_accel` 100→300 (a doc do tap exige >35 e
+  recomenda 300; `homing_speed` do Z fixado em 5 para o homing continuar lento), `z_tilt retries`
+  2→5, `[bed_mesh] scan_overshoot: 8`, tap com tolerância/mediana, malha antes de esquentar.
+- **Pressure advance:** o Orca já manda `SET_PRESSURE_ADVANCE` por filamento (PETG 0,064, fluxo
+  0,93). Mesmo assim `pressure_advance: 0.064` + `smooth_time: 0.040` agora são o **padrão** no
+  `[extruder]` (vale se o filamento não mandar nada). É estado: persiste até o RESTART. Não
+  resetamos no `PRINT_START` porque, se o Orca mandar o PA *antes* do `PRINT_START`, o reset
+  apagaria o valor do filamento (TPU). Verificar no `.gcode` a ordem das duas linhas.
+- **Input shaper refeito** (correias estavam folgadas e foram apertadas): X `mzv` **70,4 Hz**,
+  Y `mzv` **51,0 Hz**, vibração 0,0% nos dois (ZV: 3,2% no Y, 11,6% no X). `max_accel` sugerido
+  pelo Klipper: **Y ≤ 7700, X ≤ 14600**. (Minha conta própria dava 4300 no Y — estava errada
+  para esta versão do Klipper; vale o número que o Klipper mede.) Y baixo (51 Hz) é esperado em
+  CoreXY com gantry pesado; não indica sozinho correia frouxa.
+- **Pi/CAN:** Klipper recomenda `txqueuelen 128` (não 1024) em `/etc/network/interfaces.d/can0`.
+- **⚠️ PENDENTE / não aplicado:** `max_accel` 8000→~7500 (limite do Y); ringing tower
+  (`TUNING_TOWER COMMAND=SET_VELOCITY_LIMIT PARAMETER=ACCEL START=3000 STEP_DELTA=500
+  STEP_HEIGHT=5`, shaper ligado); teste de perda de passos para achar a aceleração de
+  deslocamento; PID do bico a 240C; verificar `rotation_distance` do extrusor; `descend_z` 4,0 vs
+  2,0 com `PROBE_ACCURACY`; alerta no celular (`[notifier]`); `pinned_commit` do Klipper/Happy
+  Hare; malha adaptativa (`ADAPTIVE=1`); `max_validation_temp` do `temperature_probe` se a
+  câmara esquentar; Shake&Tune só por instalação manual (o instalador mexe em serviços que não
+  existem neste Pi).
+- **⚠️ ABERTO:** pontinhos/furinhos na borda do piso sólido da primeira camada (face contra a
+  mesa) continuam mesmo com correias apertadas, tap e PA já ativos. "Sobreposição de
+  preenchimento/parede" está em 15% (Processo > Resistência) — a doc só recomenda 10-15% e ela
+  vale para preenchimento esparso, talvez nem alcance o piso sólido. Pedir foto de perto da borda.
 
 ## Checklist de pendências pro usuário confirmar
 
