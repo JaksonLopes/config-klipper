@@ -142,7 +142,8 @@ upload de arquivo novo funcionando normalmente (log do Moonraker sem erro, `201`
 
 Objetivo: usar a cabeça A4T com a placa **BTT EBB36 v1.2** (STM32G0B1) por CAN. O Pi não tem
 CAN, então a **D5 virou ponte USB-CAN** e criou uma segunda rede CAN no Pi, independente da
-da Trident (`can0`). Nada da Trident foi alterado.
+da Trident. (Depois do primeiro reboot do Pi a Trident precisou passar para `can_trident`, ver
+`trident/SESSION_NOTES.md` item 42; a D5 e a Trident agora têm nomes fixos.)
 
 ### O que foi feito
 - **D5:** já tinha Katapult (bootloader). Entrou nele com `flashtool.py -r` e recebeu o
@@ -154,8 +155,8 @@ da Trident (`can0`). Nada da Trident foi alterado.
   jumper VUSB, BOOT+RESET; precisou de `sudo`). Depois o Klipper (`~/klipper/config.ebb36`,
   mesmos parâmetros) foi gravado **por CAN**: `flashtool.py -i can_ender -u a961f4b5f8c1 -f ~/firmware-backup/klipper_EBB36.bin`.
 - **Rede no Pi:** a D5 aparece como `gs_usb` `1d50:606f`, serial USB `450049000757465036383420`.
-  Regra `/etc/udev/rules.d/70-can-ender.rules` renomeia para `can_ender`, configura bitrate
-  1000000 e sobe a interface a cada reconexão. A Trident segue em `can0` (serial
+  Regra `/etc/udev/rules.d/70-can-bridges.rules` renomeia para `can_ender`, configura bitrate
+  1000000 e sobe a interface a cada reconexão. A Trident é `can_trident` (serial
   `3E001B001353303650373120`).
 - **UUIDs CAN:** D5 `cb9f5f3a6f91`, EBB36 `a961f4b5f8c1`
   (`~/klippy-env/bin/python ~/klipper/scripts/canbus_query.py can_ender`).
@@ -178,14 +179,18 @@ da Trident (`can0`). Nada da Trident foi alterado.
   (conferir se o BLTouch está ligado).
 
 ### Pendências
-1. Ligar o termistor do hotend na EBB36 (TH0/PA3) e confirmar o tipo real (hoje `EPCOS 100K B57560G104F`, provisório) — sem isso a Ender não sobe.
-2. Conferir o BLTouch (`PB4`/`PB5` da D5) depois do restart.
-3. Migrar o resto para a EBB36 quando for ligado: aquecedor `EBBCan:PB13`, motor do extrusor
+1. ~~Ligar o termistor na EBB36~~ **Feito (2026-10-24):** com o termistor em TH0/PA3 o Klipper
+   subiu (`Printer is ready`), extrusora lendo ~25,6 °C, mesa 26,4 °C, MCU da EBB36 ~34,6 °C,
+   BLTouch sem erro. Falta confirmar o tipo real do termistor da A4T (hoje `EPCOS 100K B57560G104F`,
+   provisório; comparar com a temperatura ambiente e, depois, com o aquecimento real).
+2. Migrar o resto para a EBB36 quando for ligado: aquecedor `EBBCan:PB13`, motor do extrusor
    (`PD0` step, `!PD1` dir, `!PD2` enable, TMC2209 UART `PA15`), ventilador de peça `PA0`,
    ventilador do hotend `PA1`.
-4. Reboot de teste do Pi (com a Trident parada) para confirmar `can0` (Trident) e
-   `can_ender` (Ender) estáveis.
-5. Terminação de 120 Ω: confirmar jumper na EBB36 e se a D5 tem a dela.
+3. ~~Reboot de teste do Pi~~ Feito em 2026-10-24 sem querer: expôs a corrida de nomes `can0`/`can1`
+   (a Trident parou) e levou aos nomes fixos `can_trident`/`can_ender`. Reboot de teste feito em 2026-10-24 depois da correção: no boot a D5 ainda pegou `can0` e a
+   Trident `can1` no kernel, e a regra udev renomeou as duas (`can_ender`, `can_trident`);
+   as duas impressoras subiram em `Printer is ready`.
+4. Terminação de 120 Ω: confirmar jumper na EBB36 e se a D5 tem a dela.
 
 ## Dicas úteis pra próxima sessão
 

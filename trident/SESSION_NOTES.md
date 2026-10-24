@@ -1237,6 +1237,28 @@ Pi/CAN/Moonraker/Happy Hare). **Encoder Binky foi removido em 12/09 e o FlowGuar
   preenchimento/parede" está em 15% (Processo > Resistência) — a doc só recomenda 10-15% e ela
   vale para preenchimento esparso, talvez nem alcance o piso sólido. Pedir foto de perto da borda.
 
+### 42. Trident parou depois de reiniciar o Pi: nome da interface CAN (2026-10-24)
+
+- **Sintoma:** depois de reiniciar o Pi a Ender voltou e a Trident ficou em `startup`
+  ("attempting to connect"). A rede CAN estava intacta, mas a ponte da Trident aparecia como
+  `can1` desligada.
+- **Causa:** a Ender passou a ter a própria ponte USB-CAN (Fly D5, interface `can_ender`).
+  No boot as duas pontes sobem quase juntas e o kernel dá `can0` a quem chegar primeiro; a D5
+  pegou `can0` e a Trident ficou com `can1`. Os `.cfg` dela dependiam de `can0` (explícito
+  no `unit0` do Happy Hare, padrão nos outros).
+- **Correção definitiva:** nomes fixos por serial USB na regra
+  `/etc/udev/rules.d/70-can-bridges.rules` (`can_trident` = serial `3E001B001353303650373120`,
+  `can_ender` = `450049000757465036383420`), que também configura 1000000 de bitrate,
+  `txqueuelen 1024` e sobe a interface a cada reconexão. O `ifupdown` deixou de gerenciar
+  (o antigo `/etc/network/interfaces.d/can0` está em `/etc/network/can0.interfaces.desativado`).
+  Nomes personalizados não disputam com os `can%d` do kernel.
+- **Arquivos alterados** (backup em `~/firmware-backup/trident-cfg-20261024_173820/`):
+  `canbus_interface: can_trident` em `[mcu]` (`printer.cfg`), `[mcu ebb36]` e `[mcu eddy]`
+  (`toolhead.cfg`) e `[mcu unit0]` (`mmu/base/mmu_hardware_unit0.cfg`, antes `can0`).
+- **Regra daqui pra frente:** nunca usar `can0`/`can1` nos `.cfg`; uma ponte CAN nova precisa
+  de uma linha própria na regra udev. Se atualizar o Happy Hare, conferir que o `unit0` manteve
+  `canbus_interface: can_trident`.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`

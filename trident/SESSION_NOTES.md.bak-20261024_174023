@@ -1,0 +1,1275 @@
+# Notas de sessão — Voron Trident (MMX / Happy Hare)
+
+> Documento de contexto para futuras sessões. Resume o que foi diagnosticado e corrigido,
+> o que ficou pendente, e armadilhas conhecidas desse setup específico.
+> Última atualização: sessão de 2026-10-07 (itens 39-41: automap, bypass, tap da Eddy, shaper).
+>
+> Ver também [`CLAUDE.md`](../CLAUDE.md) na raiz do repositório: idioma padrão
+> (sempre português) e cuidados gerais válidos pra qualquer impressora deste Pi
+> multi-instância (nomes de serviço, backup automático, symlinks, etc.).
+
+## Visão geral do hardware
+
+- **Impressora:** Voron Trident, cinemática CoreXY, mesa 300x300 (bed 285x285 útil).
+- **Placa principal:** referenciada como `Fly-D7` no config, conectada via CANbus.
+- **Host:** BTT Pi v1.2, rodando Armbian (CB1, `sun50i-h616`), sistema atualizado durante
+  esta sessão para Armbian 26.5.1 Bookworm.
+- **Cabeçote:** A4T-AFC com cortador de filamento embutido (corte por movimento X/Y numa
+  alavanca física, **não** é um servo) e hotend Bambu Lab.
+- **Toolboard do cabeçote:** BTT EBB36 (extrusora, fans, endstop X), conectada via CANbus.
+- **Nivelamento:** BTT Eddy (sonda de corrente parasita, `probe_eddy_current`), via CANbus.
+  3 motores de Z independentes (`z_tilt`, não quad_gantry_level).
+- **Motores X/Y:** SIBOOR-42STH48-2404 (nominal **2.4A** por fase, confirmado em
+  docs.siboor.com).
+- **MMU:** MMX de 4 gates (Happy Hare, `mmu_vendor: MMX`), seletor por servo, **sem
+  encoder**, **sem sensor de tensão/compressão (sync-feedback)**, **sem buffer físico de
+  filamento** (alimentação direta do carretel).
+- **Fatiador:** OrcaSlicer, integração oficial Happy Hare (`MMU_START_SETUP` /
+  `_MMU_PRE_T_CODE` + `Tn` + `_MMU_POST_T_CODE` / `MMU_END`).
+
+## ⚠️ Este Pi tem 4 impressoras (importante!)
+
+O BTT Pi hospeda **4 instâncias Klipper** que compartilham **um único** `~/klipper` e
+**um único** `~/Happy-Hare`:
+
+- `printer_data` (instância padrão)
+- `printer_Ender3_data`
+- `printer_outra_data`
+- `printer_Trident_data` ← esta é a Trident
+
+**Só a Trident usa Happy Hare/MMU.** Qualquer mudança no `~/klipper` (ex: reverter uma
+versão) afeta as 4 impressoras — nunca mexer nisso sem considerar as outras 3.
+
+Os nomes reais dos serviços systemd (confirmados via `systemctl list-units`):
+
+- `klipper-Trident.service` (⚠️ **não** existe `klipper.service` sozinho nesse Pi)
+- `moonraker-Trident.service`
+
+O `moonraker.conf` da Trident tinha `managed_services: klipper` (nome errado) em duas
+seções — já corrigido para `klipper-Trident`.
+
+## Estrutura do repositório (pasta `trident/`)
+
+Reorganizado numa sessão anterior (v3). **Atualizado no item 16 (2026-09-06) pra
+migração Happy Hare v4** — estrutura atual:
+
+```
+trident/
+├── printer.cfg          # Includes, [mcu] (só a placa principal agora), [printer], SAVE_CONFIG
+├── toolhead.cfg          # EBB36 (extrusora/fans/tmc) + Eddy (sonda) — fundidos aqui
+├── steppers.cfg          # stepper_x/y/z/z1/z2 + tmc2209 + adxl345/resonance_tester
+├── bed_leveling.cfg      # safe_z_home, z_tilt, bed_mesh
+├── heaters_fans.cfg      # sensores de temperatura, heater_bed, controller_fan
+├── misc.cfg              # idle_timeout, virtual_sdcard, exclude_object
+├── macros.cfg            # PRINT_START, PRINT_END, LIMPAR_BICO, CORTE_FILAMENTO, _MMU_PURGE_CUSTOM
+├── mainsail.cfg           # symlink real no Pi (aqui aparece só como texto do caminho)
+├── moonraker.conf
+├── mmu.V3/                # BACKUP da config v3 inteira (criado automaticamente pelo install.sh
+│                            na migração pra v4) — histórico, NÃO editar/usar.
+└── mmu/                   # Config v4, gerada pelo assistente interativo (menuconfig)
+    ├── .mmu_config        # Estado salvo do menuconfig (não editar manualmente)
+    ├── base/              # mmu.cfg, mmu_hardware_unit0.cfg, mmu_parameters_unit0.cfg,
+    │                        mmu_macro_vars.cfg — arquivos REAIS e editáveis. O sufixo
+    │                        "_unit0" é novo na v4 (suporte a múltiplas unidades MMU).
+    ├── macros/            # NOVO na v4 — mmu_cut_tip.cfg, mmu_form_tip.cfg, mmu_purge.cfg,
+    │                        mmu_sequence.cfg, mmu_software.cfg, mmu_state.cfg, mmu_misc.cfg,
+    │                        mmu_heater_vent.cfg, mmu_servo_cutter.cfg, mmu_fan_control.cfg,
+    │                        blobifier.cfg (não usado) — todos SYMLINKS reais no Pi (aqui
+    │                        aparecem só como texto do caminho). NÃO adianta editar esses
+    │                        no repo, o conteúdo real está no Pi.
+    └── optional/
+```
+
+**Não usados / desativados de propósito** (comentados no `printer.cfg`):
+- `mmu/addons/blobifier.cfg` — usuário não tem a bandeja/balde físico do Blobifier.
+- `mmu/addons/mmu_erec_cutter.cfg` — não usado, corte é feito no cabeçote (X/Y), não na MMU.
+
+Existe uma branch de backup pré-sessão no remoto: `backup/trident-antes-ajustes-2026-08-02`
+(snapshot do estado antes de qualquer mudança desta sessão).
+
+O repositório tem um **cron de backup automático rodando no Pi** que commita e dá push
+periodicamente (commits "Backup automático: DATA"). **Sempre rodar `git pull --rebase`
+antes de editar**, pois o remoto pode estar um pouco à frente.
+
+## O que foi corrigido nesta sessão (cronológico)
+
+### 1. Geometria do toolhead MMX (bico empurrando filamento sem a extrusora girar)
+Medido fisicamente pelo usuário. Corrigido em `mmu/base/mmu_parameters.cfg`:
+- `toolhead_sensor_to_nozzle`: 101 → **83** (estava 18mm longo demais — causava
+  sobre-inserção, travando a extrusora enquanto o gear da MMX continuava empurrando)
+- `toolhead_extruder_to_nozzle`: 92 → **93**
+- `toolhead_entry_to_extruder`: 8 (já estava certo)
+
+### 2. Purga fazendo bola de filamento na mesa
+Causa: `purge_macro` apontava pra `_MMU_PURGE` padrão do Happy Hare, que purga onde o
+bico já estiver parado (não move sozinho). Corrigido:
+- `mmu_parameters.cfg`: `purge_macro: _MMU_PURGE` → **`_MMU_PURGE_CUSTOM`**
+- `macros.cfg`: `_MMU_PURGE_CUSTOM` agora move pro balde (X10,Y310) e chama `_MMU_PURGE`
+  **diretamente** (não `MMU_PURGE`, que causaria recursão infinita se fosse a purge_macro
+  configurada).
+
+### 3. Crash total após atualizar Klipper + Happy Hare + KlipperScreen + Armbian (grande)
+Sintoma: nenhuma placa conectava (principal, EBB36, MMX), todas via CAN.
+
+- **Não era hardware/CAN** — barramento estava saudável (`ip -s -d link show can0` com
+  tráfego real, zero erros).
+- **Causa raiz #1:** `moonraker.conf` não tinha `install_script:` na seção
+  `[update_manager happy-hare]` → atualização só deu `git pull`, nunca rodou
+  `~/Happy-Hare/install.sh` → módulos Python do Happy Hare dentro do Klipper ficaram
+  desatualizados/incompatíveis com o Klipper novo → crash (`AttributeError` no
+  `reactor.py`).
+  - **Correção:** rodado manualmente
+    `cd ~/Happy-Hare && ./install.sh -c ~/printer_Trident_data/config`
+    (flag `-c` necessária por ser Pi multi-instância).
+- **Causa raiz #2:** `managed_services: klipper` (nome de serviço errado, ver seção
+  acima) em `[update_manager happy-hare]` e `[update_manager mainsail-config]`.
+  - **Correção:** trocado pra `klipper-Trident` nas duas seções, e adicionado
+    `install_script: install.sh` na seção happy-hare pra não repetir a causa raiz #1.
+- **Causa raiz #3 (a de verdade, mais recente):** incompatibilidade real Klipper × Happy
+  Hare. O Klipper passou a proibir pausar o reactor (`assert_no_pause`) durante o
+  callback de "ready" — mas o Happy Hare (`mmu.py`, `handle_ready()`) chama
+  `_load_persisted_state()` de forma síncrona bem nesse momento, o que dispara um
+  `SAVE_VARIABLE` bloqueante → `reactor.ReactorError: Internal error - reactor pause
+  disabled`.
+  - **Correção aplicada (PATCH LOCAL):** em
+    `/home/biqu/klipper/klippy/extras/mmu/mmu.py`, linha ~949, trocado:
+    ```python
+    self._load_persisted_state()
+    ```
+    por:
+    ```python
+    self.printer.get_reactor().register_callback(lambda et: self._load_persisted_state())
+    ```
+    (adia a chamada pra depois do "ready" terminar — é exatamente o padrão que o próprio
+    time do Klipper recomenda pra quem escreve extensões, confirmado no Klipper
+    Discourse "Prevention of reactor pause").
+  - Backup do arquivo original salvo como `mmu.py.bak-prepatch` na mesma pasta.
+  - **⚠️ PENDENTE / ARMADILHA:** esse patch é local, direto no arquivo instalado. Da
+    próxima vez que `~/Happy-Hare/install.sh` rodar (próxima atualização do Happy Hare),
+    esse arquivo é sobrescrito e o crash pode voltar — **até o Happy Hare lançar uma
+    correção oficial pra essa mudança do Klipper**. Vale conferir o changelog/GitHub do
+    Happy Hare antes da próxima atualização, ou reaplicar o mesmo patch.
+
+- **Efeito colateral do `install.sh`:** ele regravou `mmu_macro_vars.cfg` e removeu uma
+  macro customizada (`_MMU_PURGE_EXTENSION`, que chamava `LIMPAR_BICO` após a purga) —
+  não preservada porque não é uma `variable_` reconhecida pelo merge do instalador.
+  - **Correção:** a chamada de `LIMPAR_BICO` foi movida pra dentro de
+    `_MMU_PURGE_CUSTOM` em `macros.cfg` (arquivo do usuário, nunca tocado pelo
+    instalador — sobrevive a futuras atualizações).
+
+### 4. Corte de filamento não funcionava (alavanca não se movia / batia e perdia passo)
+Diagnosticado em `mmu/base/mmu_macro_vars.cfg` (`_MMU_CUT_TIP_VARS`):
+- `variable_pin_loc_xy`: Y 284 → **286** (posição física remedida pelo usuário)
+- `variable_pin_park_dist`: **5.0 → -5.0** — o próprio comentário do arquivo diz que
+  cabeçotes A4T-A4C (corte no eixo Y em direção a Ymax) precisam de valor **negativo**;
+  estava positivo, fazendo a cabeça iniciar o movimento de corte já em cima da alavanca
+  em vez de ganhar distância de segurança antes.
+- `variable_cut_fast_move_fraction`: **1.0 → 0.85** — estava fazendo 100% do movimento
+  de corte na velocidade rápida, sem parte lenta controlada pro toque final na alavanca.
+- **Resultado confirmado pelo usuário: corte funcionando perfeitamente.**
+
+### 5. Ramming do OrcaSlicer deformando a ponta do filamento antes da MMU cortar
+Sintoma: no meio de impressão, MMX puxava muito filamento sem cortar, ponta deformada
+travava no hotend. **Causa não era do Happy Hare** — era o próprio OrcaSlicer fazendo
+ramming automático (~94mm de retração crua via `G1 E-`) antes do `_MMU_PRE_T_CODE`,
+por causa do modo "Multimaterial com Extrusora Única".
+
+**Correção no OrcaSlicer** (fora deste repositório, feita pelo usuário):
+- Impressora → Multimaterial: `Posição/Comprimento do tubo de resfriamento`,
+  `Posição de estacionamento`, `Distância de carregamento extra` → todos zerados.
+- Filamento → Multimaterial: volume de ramming (ainda em 10, não crítico — já gera só um
+  recuo normal de ~2mm, não os 94mm de antes. Pode zerar totalmente se quiser alinhar
+  100% com a recomendação oficial do Happy Hare, mas não é urgente).
+- Verificado no gcode gerado (`Montagem_PLA_5m10s.gcode`): bloco de ramming sumiu.
+
+### 6. Fim de impressão não desligava motores e bico reaquecia
+- `macros.cfg` → `PRINT_END`: reativado `M84` no final (tinha sido removido com um
+  comentário "para não perder home", mas o `PRINT_START` já faz `G28` completo no
+  início de toda impressão, então isso nunca foi um problema real).
+- **⚠️ PENDENTE (ação do usuário, fora deste repo):** recomendado trocar a ordem do
+  "End G-code" no OrcaSlicer de `PRINT_END` → `MMU_END` para **`MMU_END` → `PRINT_END`**,
+  porque o unload de ferramenta do `MMU_END` precisa de calor e reaquecia o bico logo
+  depois do `PRINT_END` já ter desligado. **Não confirmado se o usuário já aplicou essa
+  troca no perfil do fatiador.**
+
+### 7. Revisão geral + melhorias aplicadas
+- Removido include morto `mmu/addons/mmu_erec_cutter.cfg` (declarava um servo fantasma
+  no pino `mmu:PA7` pra um cortador na MMU que não é usado — o corte é no cabeçote).
+- Removida do git a pasta `mmu-20260802_152413/` (backup criado pelo `install.sh` do
+  Happy Hare, versionada por engano pelo cron de backup). Criado `.gitignore` na raiz do
+  repo com `**/mmu-????????_??????/` pra não repetir.
+- `has_filament_buffer: 1 → 0` (confirmado: sem buffer físico, alimentação direta do
+  carretel) — usa perfil de velocidade/aceleração mais conservador no carregamento.
+- `bed_mesh probe_count: 12,12 → 20,20` (modo scan do Eddy é rápido o bastante).
+- Motores X/Y: `run_current 0.9A → 1.2A` (motor SIBOOR-42STH48-2404, nominal 2.4A —
+  antes rodava só a 37% do nominal, pouca margem de torque pro `max_accel: 6500`
+  configurado), `hold_current 0.75A → 0.5A` (menos aquecimento parado).
+
+**Sinalizado mas não alterado** (decisão do usuário, não urgente):
+- `moonraker.conf`: `[update_manager] channel: dev` — dado todo o histórico desta sessão
+  (Klipper de ponta quebrando compatibilidade), vale considerar um canal mais estável ou
+  pelo menos cautela ao clicar "update all" sem checar compatibilidade primeiro.
+- Vários parâmetros MMU "inertes" por falta de hardware correspondente (sync-feedback
+  tension/compression, flowguard por encoder) — inofensivos, só não fazem nada até o
+  usuário instalar esse sensor/encoder.
+
+### 8. Reorganização do `printer.cfg` monolítico
+Ver seção "Estrutura do repositório" acima. Nenhum valor foi alterado nessa
+reorganização — só reagrupamento por assunto. Conferido que as 47 seções de config do
+Klipper aparecem exatamente uma vez cada (sem perda/duplicação).
+
+### 9. Exclude Object / Cancelar objeto pela web (sem tela física)
+- `[exclude_object]` já estava presente (agora em `misc.cfg`), não precisa de parâmetro.
+- OrcaSlicer: habilitado "Label objects" em Configurações de Impressão → Avançado →
+  Outros → G-code output.
+- Existe um aviso na documentação do OrcaSlicer de incompatibilidade entre "Label
+  objects" e modo Single Extruder Multi-Material — **mas foi verificado no gcode real
+  gerado (`Montagem_PLA_35m39s.gcode`) que os marcadores `EXCLUDE_OBJECT_DEFINE/
+  START/END` são gerados corretamente nesse setup** (provavelmente porque a purga é
+  feita num balde fixo pelo Happy Hare, não por "wipe into object/infill"). **Funciona,
+  confirmado.** Uso: painel "Exclude Objects" no Mainsail durante a impressão.
+
+### 10. MMU reativada + "Extruder Sensor"/"Toolhead Sensor" parando a impressão (2026-09-04)
+Usuário reativou o MMU e reportou que o "Extruder Sensor" (`extruder_switch_pin` em
+`mmu_hardware.cfg`) fica desconectando momentaneamente durante o movimento do filamento
+(provável causa física: contato ruim/vibração no microswitch ou ruído elétrico no cabo da
+EBB36, pinos PB5/PB6) — isso interrompe a troca de ferramenta e pausa a impressão inteira.
+
+- **Não quis desativar o sensor** (continua sendo útil), só não queria que um soluço dele
+  parasse a impressão.
+- **Descoberta**: com a config atual (`extruder_force_homing: 0`), o "Extruder Sensor" já
+  nem é usado pra homing (só o "Toolhead Sensor" é usado) — ele serve mais pra
+  status/checagem. Mesmo assim, uma falha de leitura durante o `Tx` pode disparar
+  `pause_macro: PAUSE` e parar tudo.
+- **Correção aplicada** em `mmu/base/mmu_parameters.cfg`:
+  `retry_tool_change_on_error: 0` → **`1`** — quando uma troca de ferramenta falha (por
+  esse tipo de soluço em qualquer um dos dois sensores), o Happy Hare agora tenta
+  recuperar automaticamente (equivalente a `MMU_RECOVER` + `Tx` de novo) em vez de pausar.
+- **⚠️ Trade-off avisado ao usuário** (texto do próprio comentário do Happy Hare):
+  "enabling this can mask problems with your MMU" — isso não resolve a causa raiz (contato
+  ruim do sensor), só faz a impressora insistir sozinha. Se o problema for elétrico e
+  piorar com o tempo, pode não ser percebido até causar um erro mais sério (grinding,
+  troca malfeita).
+- **⚠️ PENDENTE (ação física do usuário, fora deste repo):** verificar a fiação/conector
+  do "Extruder Sensor" e "Toolhead Sensor" na EBB36 (pinos PB6 e PB5) — reapertar conector,
+  checar se o cabo está longe de fontes de ruído (motor/CANbus), e verificar o microswitch
+  físico por folga/desgaste. A causa raiz provável é mecânica/elétrica, não de software.
+
+### 11. Instalação do encoder Binky (resolve a causa raiz do item 10, 2026-09-04)
+MMX veio com placa **ERCF Binky v1.0.4** (kit Seleadlab, junto com rolamentos 685 e U623) mas
+sem carcaça própria — usuário adaptou uma carcaça de terceiros compatível
+([Blinky Encoder V623ZZ with dual ECAS](https://www.printables.com/model/1618366-blinky-encoder-v623zz-with-dual-ecas))
+e instalou fisicamente no caminho do filamento entre a MMX e a extrusora, com roda de
+**12 dentes**.
+
+- **Fiação:** sinal do encoder ligado direto na **FLY-D7 (placa principal, `[mcu]` padrão)**,
+  pino **PB4** — usando o conector "3D TOUCH" da placa (`PB4 / 5V / G`), que estava livre
+  porque essa Trident usa sonda Eddy, não BLTouch. Confirmado que o Klipper não exige pino
+  "interrupt-capable" (não usa hardware interrupt pra isso), então qualquer GPIO livre
+  serviria — PB4 foi escolhido por já ter um conector de 3 vias pronto no lugar certo.
+- **Correção em `mmu/base/mmu_hardware.cfg`:** descomentada a seção `[mmu_encoder mmu_encoder]`,
+  trocado `encoder_pin: ^mmu:MMU_ENCODER` (placa da MMU) por **`encoder_pin: ^PB4`** (placa
+  principal, sem prefixo de mcu). `encoder_resolution: 1.0` mantido como valor de partida
+  (fórmula do comentário do arquivo, pra roda de 12 dentes) — será sobrescrito pela
+  calibração real.
+- **Correção em `mmu/base/mmu_parameters.cfg`:** `flowguard_enabled: 0 → 1` — agora que existe
+  um encoder de verdade, o método de detecção de clog/tangle por encoder do FlowGuard passa a
+  funcionar (documentação do Happy Hare confirma que esse método não depende dos sensores
+  Toolhead/Extruder Sensor problemáticos do item 10 — só compara movimento do encoder com o
+  da extrusora). Reativado a pedido do usuário, que queria a proteção de clog de volta agora
+  que não depende mais dos switches instáveis.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, rodar `MMU_CALIBRATE_ENCODER` pra
+  medir a resolução real (substitui o `1.0` de partida). Testar impressão pra confirmar que
+  o FlowGuard não pausa mais por falso positivo.
+
+### 12. MMU Gate Sensor movido da EBB42 para a FLY-D7 (2026-09-05)
+Usuário rewireou o "MMU Gate Sensor" (sensor compartilhado que detecta filamento passando
+pela gate da MMX) da placa própria da MMU (EBB42, pino `MMU_GATE_SENSOR=PB4` em `mmu.cfg`)
+direto pra placa principal (FLY-D7), pino **PB3**.
+
+- **Correção em `mmu/base/mmu_hardware.cfg`:** `gate_switch_pin: ^mmu:MMU_GATE_SENSOR` →
+  **`gate_switch_pin: ^PB3`** (sem prefixo de mcu, resolve na FLY-D7). Confirmado que PB3
+  não é usado em nenhum outro lugar da config da Trident.
+- O alias `MMU_GATE_SENSOR=PB4` continua declarado em `mmu.cfg` (pino da EBB42) mas ficou
+  órfão/sem uso — inofensivo, só não referencia mais nada.
+- Precisa de `RESTART` pra a mudança valer (config só é lida de novo nesse momento).
+
+### 13. Falso clog/tangle no FlowGuard - causa raiz e correção (2026-09-05)
+Depois de instalar o encoder (item 11), o FlowGuard (item 10/11) começou a pausar a
+impressão com "A clog/tangle has been detected" com frequência, mesmo sem clog real.
+Usuário mandou o `klippy.log` pra investigar.
+
+- **Causa raiz encontrada no log:** o campo "Tool Change G-code" do perfil do OrcaSlicer
+  dessa impressora ainda usava macros **obsoletas**:
+  ```
+  _MMU_PRE_T_CODE P={layer_num}
+  T[next_extruder]
+  _MMU_POST_T_CODE
+  ```
+  `_MMU_PRE_T_CODE` e `_MMU_POST_T_CODE` não existem mais nas versões atuais do Happy Hare
+  (confirmado na wiki oficial) — toda troca de ferramenta gerava `Unknown command` no log
+  pra essas duas linhas, pulando silenciosamente o que quer que elas deveriam fazer. Isso
+  provavelmente causava a dessincronia que o FlowGuard interpretava como clog.
+- **Correção (feita no OrcaSlicer, fora deste repo):** Tool Change G-code trocado para
+  só `T[next_extruder]` — é o valor recomendado pela wiki atual do Happy Hare, o comando
+  `Tn` já cuida de tudo internamente agora.
+- **Achado secundário (mesmo perfil, Start G-code):** comentários usando `#` em vez de `;`
+  (`# 1. Inicializa...` etc.) também geravam `Unknown command` — inofensivo (as macros de
+  verdade rodavam certo), mas sujava o log. Corrigido pra `;` também.
+- **Ajuste adicional em `mmu/base/mmu_parameters.cfg`:** `flowguard_max_relief: 40 → 70` —
+  mantido como margem de segurança extra mesmo depois da correção do gcode, já que o
+  encoder tem uma imprecisão natural (zona cega + folga do bowden, ver item 11). Usuário
+  optou por manter os dois ajustes juntos em vez de isolar a variável.
+- **⚠️ PENDENTE (ação do usuário):** confirmar com uma impressão de teste (com troca de
+  cor) que o `Unknown command` sumiu do log e que o FlowGuard não dispara mais falso
+  positivo.
+
+### 14. Aviso "Excess slippage" no carregamento do bowden - zona cega do encoder (2026-09-05)
+Depois de corrigir o gcode (item 13), o clog/tangle parou, mas apareceu um aviso novo e
+consistente a cada carregamento de bowden:
+```
+Warning: Excess slippage was detected in bowden tube load but 'bowden_apply_correction'
+is disabled. Gear moved 1333.2mm, Encoder measured 1135.4mm.
+```
+- **Não é um erro novo** — é a mesma "zona cega" do item 11 (distância entre o sensor da
+  gate e a posição física do encoder, onde o Happy Hare não consegue medir movimento
+  porque o filamento ainda não tocou a rodinha).
+- **Correção em `mmu/base/mmu_parameters.cfg`:** `gate_endstop_to_encoder: 10 → 210` —
+  esse parâmetro informa ao Happy Hare a distância real (em mm) entre o sensor da gate e
+  o encoder, calculada pela diferença observada entre movimento da engrenagem e leitura
+  do encoder (~200-220mm em duas medições diferentes). Com o valor certo, o Happy Hare já
+  espera essa zona cega e não trata mais como slippage anômalo.
+- **`bowden_apply_correction` permanece desabilitado (0) — não ativar.** Esse parâmetro
+  faz o Happy Hare "acreditar" no encoder e empurrar a engrenagem pra compensar a
+  diferença. Como a diferença aqui não é slippage real, ativar isso faria ele
+  superinserir ~200mm de filamento a mais tentando corrigir um problema que não existe,
+  arriscando esmagamento/grinding.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, confirmar que o aviso sumiu ou
+  diminuiu bastante. Se quiser refinar ainda mais, medir fisicamente a distância real ao
+  longo do tubo (sensor da gate → rodinha do encoder) e ajustar esse valor.
+
+### 15. G2/G3 "Unknown command" - arco não habilitado (2026-09-05)
+Console cheio de `Unknown command:"G2"` / `Unknown command:"G3"` durante impressão. Causa:
+o Orca gera movimento em arco (G2/G3) em vez de várias retas pequenas, mas o Klipper só
+entende esses comandos com a seção `[gcode_arcs]` habilitada — que não existia no
+`printer.cfg`. Sem isso, o bico ficava parado exatamente onde devia curvar (defeito real
+de qualidade, não só log sujo).
+
+- **Correção em `printer.cfg`:** adicionado `[gcode_arcs]` (com `resolution` no padrão,
+  1.0mm por segmento).
+- **Precisa de `RESTART`.**
+
+Também explicado ao usuário o significado do "Gate Statistics" (`console_gate_stat:
+emoticon`) que aparece no fim de cada impressão — é um placar histórico de confiabilidade
+por gate (baseado em sucessos/falhas acumuladas), não reflete só a impressão atual. A nota
+pior do Gate 0 é resquício das falhas de FlowGuard de antes dos itens 13/14 serem
+corrigidos. Pode ser zerado com `MMU_STATS RESET=1` se quiser recomeçar o histórico
+(cosmético, não afeta funcionamento).
+
+### 16. Migração forçada Happy Hare v3 → v4 (2026-09-06)
+Usuário clicou "Atualize todos os componentes" no Gerenciador de Atualização sem
+planejar, e o Happy Hare pulou de v3.4.2 pra **v4.0.0** (major version, sem migração
+automática de config — confirmado pelo próprio Happy Hare: "There is no supported
+v3 → v4 config migration"). Klipper parou de carregar (`cannot import name 'mmu_unit'`).
+
+- **Processo:** `cd ~/Happy-Hare && ./install.sh -c ~/printer_Trident_data/config`,
+  escolhida a opção 2 ("upgrade to v4"). Isso renomeia a pasta v3 inteira pra
+  `mmu.V3` (preservada, nada apagado) e roda um assistente interativo (menuconfig)
+  pra gerar a config v4 do zero. Passamos por TODAS as telas manualmente, replicando
+  cada valor customizado da v3 (documentado abaixo).
+- **Estrutura de arquivos mudou:** antes era `mmu/base/{mmu,mmu_hardware,mmu_parameters,
+  mmu_macro_vars}.cfg` (arquivos reais) + vários symlinks. Agora é
+  `mmu/base/{mmu,mmu_hardware_unit0,mmu_parameters_unit0,mmu_macro_vars}.cfg` (note o
+  sufixo `_unit0` — a v4 suporta múltiplas unidades MMU) + uma pasta nova
+  `mmu/macros/*.cfg` (todos symlinks). Backup completo da v3 ficou em `trident/mmu.V3/`
+  neste repo (não usar/editar, é só histórico).
+- **Valores customizados replicados na v4** (todos conferidos manualmente, tela por
+  tela, contra a v3): tipo MMX, placa BTT EBB42 CANbus (UUID `f26f15ebcfb6`), encoder
+  habilitado (pino `PB4` na FLY-D7), gate sensor compartilhado habilitado (pino `PB3`
+  na FLY-D7), sensores de gate/lane entry, toolhead cutter + toolhead sensor
+  (`ebb36:PB5`) + extruder sensor (`ebb36:PB6`) com as distâncias medidas
+  (93/83/8mm), toolhead preset "A4T WWBMG Bambu TZ3", valores de corte
+  (`_MMU_CUT_TIP`: blade position 67, retract 20, pin location 3,286, pin park
+  -5.0, rip length 2.0, fast move fraction 0.85), EndlessSpool habilitado, retry
+  automático de troca de ferramenta habilitado, FlowGuard por encoder habilitado
+  (sync-feedback desabilitado, sem esse hardware), autotune de bowden habilitado,
+  calibração de rotação/encoder não pulada, corrente sincronizada da engrenagem 70%,
+  velocidades de bowden ajustadas (80mm/s carga normal, 18mm/s homing), velocidade de
+  purga aumentada de 2 pra 5 (estava muito lenta), e os caminhos/nomes de serviço do
+  Pi multi-instância (`gcodes` dir, `klipper-Trident.service`,
+  `moonraker-Trident.service` — o assistente veio com valores errados/genéricos aqui,
+  mesmo tipo de erro já visto antes nesse Pi).
+- **Bugs pós-instalação corrigidos:**
+  - `Duplicate canbus_uuid`: o instalador não removeu a declaração antiga
+    `[mcu mmu]` do `printer.cfg` (linha solta, fora da pasta `mmu/` gerenciada) —
+    ficou duplicada com o novo `[mcu unit0]` do `mmu_hardware_unit0.cfg`, mesmo
+    UUID. **Corrigido:** removida a seção `[mcu mmu]` do `printer.cfg`.
+  - `gate_parking_distance` inválido: a v4 **inverteu o sinal** desse parâmetro
+    comparado à v3 (v3: positivo = recuar; v4: negativo = recuar, convenção padrão
+    do Klipper). O assistente aceitou `25` (copiado literal da v3) sem validar na
+    hora, mas o Klipper rejeitou no boot exigindo `<= 0` pro tipo de endstop
+    `mmu_shared_exit`. **Corrigido:** `25 → -25` em `mmu_parameters_unit0.cfg`.
+  - **`mmu/mmu_vars.cfg` vazio** (só o template, `mmu__revision = 0`) — o
+    `install.sh` migra a config estática (hardware/parameters) mas **não migra as
+    variáveis persistidas de estado/calibração**. Todo o resultado calibrado de
+    verdade (`mmu_calibration_bowden_lengths = 1333.2`,
+    `mmu_encoder_resolution = 0.9752` — valor real medido, não o `1.0` de partida,
+    `mmu_gear_rotation_distances`, `mmu_selector_angles`, estatísticas por gate)
+    ficou intacto só no backup `mmu.V3/mmu_vars.cfg`. **Corrigido:** copiado o
+    conteúdo de calibração do `mmu.V3/mmu_vars.cfg` pro `mmu/mmu_vars.cfg` novo —
+    o próprio comentário do arquivo template confirma que reaproveitar um arquivo
+    de variáveis existente é suportado. Evita ter que refazer
+    `MMU_CALIBRATE_GEAR`/`MMU_CALIBRATE_ENCODER`/`MMU_CALIBRATE_BOWDEN` do zero.
+- **⚠️ PENDENTE (ação do usuário):** testar impressão completa com troca de cor
+  pra confirmar que a v4 está estável, e conferir no console (`MMU_STATUS` ou
+  similar) que os valores calibrados (bowden 1333.2mm, encoder 0.9752) realmente
+  foram reconhecidos pela v4 após copiar o `mmu_vars.cfg` — se a v4 usar nomes de
+  variável diferentes internamente (ex: com prefixo do unit), pode ignorar
+  silenciosamente esses valores antigos e exigir recalibração mesmo assim. O item
+  da checklist antiga sobre o patch do `mmu.py` (item 3, causa raiz #3) **não se
+  aplica mais** — a v4 reestruturou o código do MMU inteiro, e o `install.sh`
+  sempre reescreve esses arquivos do zero agora.
+- **Confirmado (2026-09-06):** a v4 realmente não reconheceu os valores copiados do
+  `mmu_vars.cfg` v3 — pediu recalibração completa (`MMU_CALIBRATE_GEAR`,
+  `MMU_CALIBRATE_ENCODER`, `MMU_CALIBRATE_GATE` por gate). Durante a recalibração,
+  `MMU_TEST_MOVE MOVE=100` moveu o filamento **na direção contrária** (puxando pra
+  trás em vez de alimentar). Causa: o assistente de instalação gerou
+  `dir_pin: unit0:PD1` pro `stepper_mmu_gear` (`mmu_hardware_unit0.cfg`) **sem** a
+  inversão `!` que a v3 tinha (`dir_pin: !mmu:MMU_GEAR_DIR`). **Corrigido:**
+  `dir_pin: !unit0:PD1`. Recalibração da engrenagem/encoder/gates precisa ser
+  refeita do zero de qualquer forma (ver pendência abaixo).
+
+### 17. Pesquisa aprofundada v4 + revisão overnight (2026-09-06, madrugada)
+Usuário foi dormir no meio da recalibração pós-migração e pediu pra eu (a) pesquisar a
+fundo a documentação oficial da v4 (`https://moggieuk.github.io/Happy-Hare-Doc/`),
+(b) responder se a v4 já tem macro de corte de filamento built-in ou se precisa manter
+a customizada, (c) comparar v3 (`mmu.V3/`) vs v4 (`mmu/`) atrás de mais melhorias, e
+(d) corrigir o que desse pra corrigir sozinho (só arquivos de config — não tenho acesso
+ao console da impressora pra rodar G-code).
+
+**Resposta sobre o cortador de filamento:** a v4 **usa exatamente a mesma macro
+`_MMU_CUT_TIP`** que a v3, com as mesmas variáveis (`pin_loc_xy`, `pin_park_dist`,
+`cut_fast_move_fraction`, etc. em `_MMU_CUT_TIP_VARS`) — já configuramos tudo isso
+certinho no menuconfig ontem (item 16). **Não precisa de nada customizado extra, nem
+trocar nada** — sua `CORTE_FILAMENTO` (que chama `_MMU_CUT_TIP`) continua válida.
+
+**Achados da pesquisa + correções aplicadas:**
+- `gate_endstop_to_encoder` **ainda existe** na v4 (`mmu_parameters_unit0.cfg`) — só não
+  apareceu no assistente interativo (menuconfig) que passamos ontem, por isso ficou
+  esquecido no valor padrão `10`. **Corrigido: `10 → 210`** (mesma distância física
+  medida na v3, item 14).
+- Confirmado no `mmu_vars.cfg` atual que a v4 usa variáveis com **prefixo `unit0_`**
+  para dados por-gate (`mmu_unit0_gear_rotation_distances`,
+  `mmu_unit0_bowden_lengths`) — diferente das antigas que copiamos do backup v3 (que
+  ficaram órfãs/sem uso, exceto `mmu_selector_angles`, que parece ter sido reconhecida
+  sem prefixo). Confirma que **o bowden também precisa ser recalibrado**
+  (`mmu_unit0_bowden_lengths` está `[-1,-1,-1,-1]`, vazio) — não só engrenagem/encoder
+  como pensávamos ontem.
+- **`endless_spool_groups` está vazio** (`mmu.cfg`) — o EndlessSpool está habilitado
+  (`endless_spool_enabled: 1`) mas sem grupos definidos ele não tem o que fazer (não
+  sabe quais gates são "backup" um do outro). **Não configurei sozinho** porque depende
+  de qual gate físico tem o mesmo material/cor de qual — isso só o usuário sabe. Ver
+  pendência abaixo com a sintaxe.
+- **FlowGuard confirmado:** com `flowguard_encoder_mode: 2` (automático), o parâmetro
+  antigo `flowguard_max_relief` é ignorado — quem importa agora é `desired_headroom`
+  (na seção do encoder, `mmu_parameters_unit0.cfg`). Se o falso clog voltar a acontecer,
+  o ajuste certo agora é aumentar `desired_headroom`, não mais `flowguard_max_relief`.
+- Achei um comando de diagnóstico útil pra rodar amanhã antes de mais nada:
+  **`MMU_SENSORS`** — relata o estado de todos os sensores de todas as unidades (gate,
+  pre-gate, toolhead, extruder, encoder). Bom pra confirmar que a migração não bagunçou
+  nenhum sensor silenciosamente.
+- **Melhoria real encontrada na página oficial "Slicer Setup" da v4:** o Tool Change
+  G-code recomendado pro OrcaSlicer tem parâmetros extras que ainda não temos
+  (adicionados no item 13, só com `T[next_extruder]`):
+  ```
+  T[next_extruder] SLICER_RETRACTION={old_retract_length} SLICER_FW_RETRACTION={use_firmware_retraction}
+  ```
+  Esses dois parâmetros extras avisam o Happy Hare sobre a retração que o próprio
+  OrcaSlicer já está configurado pra fazer, evitando retração duplicada/inconsistente
+  entre o que o fatiador manda e o que o Happy Hare faz por conta própria na troca de
+  ferramenta. **⚠️ PENDENTE (ação do usuário, fora deste repo):** atualizar esse campo
+  no OrcaSlicer com o texto acima. O Start G-code e o End G-code que já configuramos
+  (item 6/13) continuam batendo com a recomendação oficial da v4 — não precisa mudar
+  esses dois.
+- **Opcional (baixa prioridade):** existe `MMU_CALIBRATE_TOOLHEAD`, que mede
+  automaticamente as 4 distâncias do toolhead (as mesmas que já colocamos manualmente
+  no menuconfig: 93/83/8mm) usando o sensor do toolhead. Documentação confirma que é
+  seguro rodar a qualquer momento, mesmo já tendo valores manuais — só serve como
+  double-check. Não é urgente, os valores manuais já são fisicamente medidos e
+  confiáveis.
+
+**⚠️ PENDENTE — comandos pra rodar quando acordar (nessa ordem):**
+```
+MMU_SENSORS                    # confirma que todos os sensores estão OK primeiro
+MMU_CALIBRATE_ENCODER           # gate 0 ainda selecionado, encoder ainda nao calibrado
+MMU_CALIBRATE_GATE GATE=1       # repete pros gates 1, 2 e 3
+MMU_CALIBRATE_GATE GATE=2
+MMU_CALIBRATE_GATE GATE=3
+MMU_CALIBRATE_BOWDEN            # confirmar se pede BOWDEN_LENGTH= ou roda sozinho
+                                 # (na v3 rodou sem parametro nenhum, usando o toolhead sensor)
+```
+Se `MMU_CALIBRATE_GATE` (singular) não existir como comando, tentar `MMU_CALIBRATE_GATES`
+(plural) — a documentação usa os dois nomes em páginas diferentes, não confirmei qual é
+o certo pra essa versão exata sem poder rodar o comando eu mesmo.
+
+**Decisão pendente do usuário:** configurar `endless_spool_groups` em `mmu.cfg` (linha
+190) se quiser que o EndlessSpool funcione de verdade — sintaxe:
+`MMU_ENDLESS_SPOOL_GROUPS GROUPS=<lista de 4 numeros, um por gate, mesmo numero = mesmo
+grupo/material>` (ex: gates 0 e 2 com o mesmo material de backup = `0,1,0,1`). Também
+descoberto que existe interface visual pra isso: painel "Mmu" no Mainsail → botão "⋮"
+→ "MAP TOOLS" → editor "Edit TTG Map" com indicador `∞` (EndlessSpool) por gate, grupos
+nomeados por letra (A, B, C...) — não precisa digitar comando.
+
+### 18. `gate_preload_parking_distance` sem recuo - bloqueava troca de gate (2026-09-06)
+Durante a calibração (item 17), usuário empurrou filamento manualmente até o pre-gate do
+gate 1 (aciona o autoload, `gate_autoload: 1`) — o motor levou o filamento até o
+`mmu_shared_exit`, mas **não recuou depois**, ficando parado bem no sensor compartilhado.
+Isso bloqueou o preload de qualquer outro gate (`MMU issue: Filament preload for gate 1
+failed: Cannot preload gate 1: shared 'mmu_shared_exit' path is already occupied`) —
+confirma que só pode ter filamento de um gate por vez nesse ponto físico compartilhado.
+
+- **Causa:** `gate_preload_parking_distance: 0` em `mmu_parameters_unit0.cfg` — copiado
+  fiel da v3 no menuconfig (lá também era `0`), mas na prática isso significa **recuo
+  zero** depois do preload, deixando o caminho compartilhado ocupado. É um parâmetro
+  **separado** do `gate_parking_distance` (usado só na troca de ferramenta formal, `Tx`)
+  — o preload automático (disparado pelo sensor pre-gate) usa esse outro.
+- **Correção:** `gate_preload_parking_distance: 0 → -25` (mesmo recuo do
+  `gate_parking_distance`, que já resolvia o mesmo tipo de problema pro fluxo normal
+  de troca de ferramenta).
+- **⚠️ PENDENTE (ação do usuário):** ejetar o filamento que ficou preso no gate 1 agora
+  (`MMU_EJECT GATE=1`) antes de testar de novo, já que a correção no config não desfaz
+  sozinha o que já está fisicamente parado lá. Depois do `RESTART`, reinserir o
+  filamento no pre-gate e confirmar que agora recua sozinho.
+- **Resolvido e confirmado pelo usuário** — voltou a recuar certinho.
+
+### 19. `extruder_homing_endstop` errado impedia calibração do bowden (2026-09-06)
+`MMU_CALIBRATE_BOWDEN BOWDEN_LENGTH=1300` falhou 3 tentativas seguidas: "Calibrating
+bowden length on gate 0 using mmu_shared_exit sensor as gate reference point and
+**encoder collision detection**" — usando detecção por colisão (corrente reduzida a
+30%, tentando "sentir" a engrenagem travar no encoder) em vez do sensor real da
+extrusora.
+
+- **Causa:** `extruder_homing_endstop` ficou `none` na v4 (o menuconfig assumiu esse
+  padrão pro preset de toolhead "A4T WWBMG Bambu TZ3"), mas a v3 tinha
+  `extruder_homing_endstop: extruder` (usando o sensor real `Extruder Sensor`,
+  `ebb36:PB6`). Pra troca de ferramenta normal "none" funciona (porque o Toolhead
+  Sensor cobre), mas o comando `MMU_CALIBRATE_BOWDEN` especificamente precisa de um
+  método de homing definido e cai pra colisão por encoder (não confiável) quando é
+  "none".
+- **Correção:** `extruder_homing_endstop: none → extruder`, restaurando o método
+  baseado em sensor real, igual à v3.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, rodar
+  `MMU_CALIBRATE_BOWDEN BOWDEN_LENGTH=1300` de novo.
+- **Resolvido e confirmado** — calibração de bowden completa pra todos os gates
+  (`1320.9mm`), `MMU_STATUS` sem nenhum aviso de calibração pendente.
+
+### 20. Bolinhas de filamento durante Z-tilt/nivelamento a quente (2026-09-06)
+Usuário notou bolinhas de filamento na mesa durante o `G28 Z`/`Z_TILT_ADJUST` do
+`PRINT_START`. Confirmado que **não é contato físico** (a sonda Eddy é sem contato) —
+é só o bico já quente (o `PRINT_START` aquece a extrusora de propósito **antes** de
+nivelar, pra considerar dilatação térmica real — isso é intencional, não mexer) babando
+um pouco enquanto os movimentos de nivelamento passam perto da mesa.
+
+- **Correção em `macros.cfg`:** adicionada uma chamada de `LIMPAR_BICO` logo depois do
+  `TEMPERATURE_WAIT` (bico atingiu temperatura) e **antes** do `Z_TILT_ADJUST` — limpa
+  qualquer ooze acumulado durante o aquecimento antes dos movimentos de nivelamento
+  passarem perto da mesa. A chamada original de `LIMPAR_BICO` no final (depois da malha)
+  continua lá também, como limpeza final antes de imprimir.
+- Não mexe em nenhum offset/altura/calibração — resolve a causa raiz (ooze) em vez de
+  mascarar o sintoma.
+
+### 21. `autotune_bowden_length` inflou o comprimento calibrado - estourou PTFE (2026-09-06)
+Durante uma impressão, o filamento chegou nas engrenagens da extrusora e o MMU **não
+desacelerou**, continuando a empurrar em velocidade rápida — sem dar tempo da extrusora
+puxar. Isso arrancou o PTFE do encaixe no hub. Usuário deixou a impressão continuar (a
+extrusora conseguia puxar mesmo com o tubo solto), mas percebeu que a folga/sobra de
+filamento ia **aumentando progressivamente** ao longo da impressão (não só nas trocas de
+ferramenta), e recebeu o aviso:
+```
+Warning: Excess slippage was detected in bowden tube load but 'bowden_apply_correction'
+is disabled. Gear moved 1510.9mm, Encoder measured 1359.4mm.
+```
+
+- **Causa raiz confirmada no `mmu_vars.cfg` puxado do backup automático:**
+  `mmu_unit0_bowden_lengths` tinha saltado de **1320.9mm** (valor calibrado e confirmado
+  no item 19) para **1527.8mm** — um salto de quase 207mm. O registro de estatísticas do
+  gate 1 (`load_distance: 1510.9`, `quality: 0.76`) bate exatamente com o carregamento
+  problemático.
+  - `autotune_bowden_length: 1` estava ativo — esse recurso reajusta o comprimento
+    calibrado do bowden automaticamente a cada carregamento, confiando na telemetria do
+    encoder, sem supervisão.
+  - Como `variable_bowden_lengths: 0` (todo MMX compartilha o mesmo comprimento entre os
+    4 gates), um único carregamento ruim no gate 1 contaminou o valor usado por **todos os
+    gates de uma vez**.
+  - Com o comprimento calibrado inflado, o trecho "rápido" do carregamento (100mm/s,
+    calculado como `comprimento_calibrado - bowden_load_homing_buffer (20mm)`) passa a
+    ultrapassar a posição física real do sensor da extrusora **ainda em velocidade
+    máxima**, sem nunca entrar na fase de home devagar (que deveria dar tempo da
+    extrusora "pegar" o filamento com cuidado) — batendo com o comportamento relatado.
+  - O aumento progressivo da folga durante a impressão (não só nas trocas) se explica por
+    `sync_to_extruder: 1` — a engrenagem do MMU fica sincronizada e girando continuamente
+    junto com a extrusora durante toda a impressão, então a folga do PTFE desconectado
+    (filamento flambando/dobrando no trecho aberto em vez de avançar reto) vai
+    acumulando aos poucos ao longo de toda a impressão, não só em pontos discretos.
+- **Correção aplicada:**
+  - `mmu/base/mmu_parameters_unit0.cfg`: `autotune_bowden_length: 1 → 0` — desativado
+    pra impedir que o sistema volte a reajustar esse valor sozinho sem supervisão.
+  - `mmu/mmu_vars.cfg`: `mmu_unit0_bowden_lengths` revertido de `[1527.8, 1527.8, 1527.8,
+    1527.8]` de volta pro último valor confiável, `[1320.9, 1320.9, 1320.9, 1320.9]`.
+- **⚠️ PENDENTE (ação física do usuário, fora deste repo):**
+  - Reencaixar o PTFE firme no hub (confirmar que a trava/collet ainda segura — trocar
+    se estiver rachada/frouxa) antes de qualquer novo carregamento.
+  - Depois do reencaixe físico confirmado, rodar `MMU_CALIBRATE_BOWDEN
+    BOWDEN_LENGTH=1300` de novo pra ter um valor 100% fresco e confiável (o `1320.9mm`
+    restaurado é o último bom conhecido, mas uma recalibração nova é mais segura).
+  - Considerar `MMU_STATS RESET=1` no gate 1 pra limpar a estatística de qualidade ruim
+    (`0.76`) que ficou registrada por causa desse evento (cosmético, não afeta
+    funcionamento).
+
+### 22. Velocidade de purga pulando passo na extrusora (2026-09-06)
+Depois do ajuste do item 17 (`variable_extruder_purge_speed: 2 → 5`), usuário notou que
+5mm/s estava rápido demais e a extrusora pulava passo durante a purga.
+
+- **Correção em `mmu/base/mmu_macro_vars.cfg`:** `variable_extruder_purge_speed: 5 → 3`
+  — meio-termo entre o valor original (2, mais lento que o necessário) e o 5 que pulava
+  passo. O próprio comentário do arquivo já orienta: "set speed as fast as you can
+  without the extruder skipping steps".
+- **⚠️ PENDENTE (ação do usuário):** confirmar numa próxima purga que 3mm/s não pula mais
+  passo. Se ainda pular, reduzir mais; se sobrar folga, pode subir um pouco (mas não
+  volte pro 5).
+
+### 23. Corte de filamento voltou a falhar após a migração v4 - `cutting_axis` errado (2026-09-06)
+Depois do `RESTART` com a correção do item 21, confirmado pelo log (`mmu.log`) que o fix
+do bowden está funcionando: `Autotune (disabled): Current bowden length for gate 0:
+1320.9mm, Loaded: 1324.6mm (delta: +3.7mm). Ignored` — o autotune calculou uma pequena
+diferença normal e **ignorou** por estar desativado, exatamente como esperado.
+
+Só que na primeira troca de ferramenta de verdade (T0 → T1) o corte de filamento voltou
+a falhar, travando a impressão:
+```
+Error running _MMU_CUT_TIP: Move out of range: -2.000 286.000 1.676 [213.026].
+Occurred when changing tool: T0 > T1
+```
+- **Causa raiz:** `variable_cutting_axis` em `mmu_macro_vars.cfg` estava **`'x'`**, mas o
+  correto pro cabeçote A4T-A4C (confirmado no comentário do próprio arquivo e no backup
+  da v3, `mmu.V3/base/mmu_macro_vars.cfg:301`) é **`'y'`** — esse cabeçote corta no eixo Y
+  em direção a Ymax, não no eixo X.
+  - Essa variável **não aparece no assistente interativo (menuconfig)** da migração v3→v4
+    (item 16) — só existe dentro do `mmu_macro_vars.cfg`, que o instalador regenerou do
+    zero sem preservar esse valor específico da v3. Passou despercebido na conferência
+    tela por tela porque simplesmente não tinha tela pra ele.
+  - Com `cutting_axis: 'x'` errado, o Happy Hare tentava posicionar o cabeçote em
+    `pin_loc_xy.x (3) + pin_park_dist (-5) = -2` no eixo X — inválido, já que
+    `position_min` do X é `0` (`steppers.cfg`). O correto é aplicar essa distância no
+    eixo Y: `pin_loc_xy.y (286) + pin_park_dist (-5) = 281`, um valor válido.
+- **Correção:** `variable_cutting_axis: 'x' → 'y'` em `mmu/base/mmu_macro_vars.cfg`.
+- **Continuação (mesmo dia):** com o `cutting_axis` corrigido, o corte parou de travar
+  mas passou a cortar **pro lado errado** (direção oposta ao Ymax). Segunda variável não
+  preservada na migração encontrada: `variable_pin_loc_compressed_xy` (posição com o
+  cortador totalmente pressionado) estava `0.5, 250` na v4, mas o backup da v3 tinha
+  `3.0, 310.0`. Com `cutting_axis: 'y'`, o X precisa ficar igual ao `pin_loc_xy.x` (3) e
+  o Y precisa ir até perto do Ymax (311) — com `250` (menor que os 286 do ponto de
+  contato do pino), o corte ia na direção contrária. **Corrigido:**
+  `variable_pin_loc_compressed_xy: 0.5, 250 → 3.0, 310.0`.
+- **Achado secundário, não alterado:** `variable_pushback_length` está `15.0` na v4 atual,
+  mas o backup da v3 tinha `0`. Não mexi nesse porque não está relacionado ao bug
+  reportado (não afeta a direção/posição do corte, só o quanto o resto do filamento é
+  empurrado de volta pro hotend depois) — mas fica registrado como mais um valor que a
+  migração pode não ter preservado fielmente, caso o usuário note algo estranho relacionado
+  a isso depois.
+- **Auditoria completa feita (mesmo dia):** conferidas TODAS as variáveis de
+  `_MMU_CUT_TIP_VARS` da v4 contra o backup da v3, uma por uma. Fora as duas já
+  corrigidas acima, tudo mais bate exatamente: `blade_pos`, `retract_length`,
+  `pin_loc_xy`, `pin_park_dist`, `rip_length`/`rip_speed`, todas as velocidades de corte
+  (`travel_speed`, `cut_fast_move_speed`, `cut_slow_move_speed`, `evacuate_speed`,
+  `cut_dwell_time`, `cut_fast_move_fraction`, `extruder_move_speed`),
+  `safe_margin_xy` e as configs de servo de gantry. Só o `pushback_length` continua
+  diferente (v3: 0, v4: 15.0) — não mexe na posição/direção do corte, só em quanto do
+  resto do filamento é empurrado de volta pro hotend depois de cortar, então não é
+  perigoso e ficou como está.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, tentar de novo uma troca de
+  ferramenta com corte (`T0 → T1` ou similar) pra confirmar que agora corta na direção e
+  posição certas.
+
+### 24. Auditoria completa v3 vs v4, variável por variável (2026-09-06)
+A pedido do usuário ("confere se tudo bateu certinho... em todos os arquivos, e em todas
+as variáveis... já deixou passar bastante erro"), depois de já termos encontrado 5 bugs de
+migração avulsos (itens 16/18/19/21/23), foi feita uma auditoria exaustiva comparando os
+4 arquivos de config do Happy Hare da v4 (`mmu/base/{mmu,mmu_hardware_unit0,
+mmu_parameters_unit0,mmu_macro_vars}.cfg`) contra o backup completo da v3
+(`mmu.V3/base/{mmu,mmu_hardware,mmu_parameters,mmu_macro_vars}.cfg`), linha por linha,
+usando 4 agentes em paralelo (um por arquivo).
+
+**Corrigido (regressões confirmadas da migração):**
+- `mmu.cfg`: `purge_macro: _MMU_PURGE → _MMU_PURGE_CUSTOM` — a migração tinha revertido
+  pra macro de purga padrão de fábrica, perdendo o comportamento customizado (mover pro
+  balde X10,Y310 e limpar o bico depois, ver item 2 do histórico).
+- `mmu.cfg`: `extruder_switch_pin` e `toolhead_switch_pin` (ambos `ebb36:PB6`/`ebb36:PB5`)
+  — faltava o modificador de pull-up interno `^` que a v3 tinha. Sem pull-up esses pinos
+  podem ficar "flutuando" e gerar leitura ruidosa/errática — possivelmente relacionado
+  aos soluços do "Extruder Sensor"/"Toolhead Sensor" já vistos no item 10.
+- `mmu_hardware_unit0.cfg`: mesmo problema de pull-up ausente em `mmu_shared_exit_switch_pin`
+  (`PB3`) e `encoder_pin` (`PB4`) — corrigido, ambos com `^` de volta.
+- `mmu_parameters_unit0.cfg`: `flowguard_enabled: 0 → 1` — a proteção de clog/tangle por
+  encoder, que tínhamos reativado deliberadamente no item 11 (depois de instalar o
+  encoder Binky), tinha voltado a ficar DESATIVADA depois da migração pra v4. Essa era a
+  mais grave de todas: a impressora estava sem essa camada de proteção sem o usuário saber.
+- `mmu_parameters_unit0.cfg`: restaurados 4 valores de margem de segurança pro valor mais
+  conservador que a v3 usava (a v4 tinha reduzido todos, o que é consistente com o padrão
+  de "empurra rápido demais / passa do ponto" que já causou o incidente do PTFE no item 21):
+  - `extruder_homing_max: 100 → 80`
+  - `bowden_load_homing_buffer: 20 → 25`
+  - `bowden_unload_homing_buffer: 40 → 50`
+  - `gear_load_speed: 100 → 80` (a v3 tinha dois perfis, `gear_from_spool_speed: 80` e
+    `gear_from_buffer_speed: 150`; como este MMU não tem buffer físico
+    [`has_filament_buffer: 0`], o valor realmente usado na v3 era 80 — a v4 uniu os dois
+    perfis num só e ficou com 100, mais rápido que o testado)
+- `mmu_macro_vars.cfg` (`_MMU_SEQUENCE_VARS`): `variable_post_form_tip_position` e
+  `variable_pre_load_position`, ambos `-999,-999,0 → 10,310,0` — a v3 movia o cabeçote
+  pra perto do balde de purga (X10,Y310, mesma posição usada em `LIMPAR_BICO` e
+  `_MMU_PURGE_CUSTOM`) antes de carregar e depois de cortar/formar a ponta; a v4 tinha
+  desativado os dois movimentos (virou no-op, ficava onde estivesse).
+- `mmu_macro_vars.cfg` (`_MMU_SEQUENCE_VARS`): `variable_auto_home: False → True` — a v3
+  permitia que o Happy Hare homasse os eixos automaticamente se necessário antes de um
+  movimento de parking; a v4 tinha desativado isso. Possivelmente relacionado às mensagens
+  `DEBUG: Cannot save toolhead position or z-hop for unload because not homed` vistas no
+  log do item 23/`MMU_EJECT`.
+
+**Analisado e decidido NÃO alterar** (diferença real, mas com boa razão pra manter a v4):
+- `gear_homing_speed: 80 (v3) → 50 (v4)` e `gear_short_move_accel: 600 (v3) → 400 (v4)` —
+  a v4 ficou MAIS conservadora (mais devagar) nesses dois, não mais arriscada. Mantido.
+- `toolhead_unload_safety_margin: 5 (v3) → 10 (v4)` — a v4 tem MAIS margem de segurança
+  (o comentário do próprio arquivo diz que é o valor padrão de fábrica), não menos.
+  Mantido.
+- `variable_rotation_distances: 1` (v4) vs v3 (não definido explicitamente, comentado) —
+  esse "1" é consistente com o fluxo de calibração por-gate que já usamos
+  (`MMU_CALIBRATE_GATE GATE=1/2/3`, item 17) — se fosse "0" (uma engrenagem só, sem
+  variação por gate) não faria sentido calibrar cada gate separadamente. Mantido.
+- `flowguard_max_relief` (ausente na v4) — não é uma perda de verdade: com
+  `flowguard_encoder_mode: 2` (automático, que já usamos) esse parâmetro antigo é
+  ignorado mesmo, quem manda agora é `desired_headroom` (já confirmado no item 17).
+- `gate_homing_endstop: mmu_gate (v3) → mmu_shared_exit (v4)` — é só renomeação de
+  convenção (a própria doc da v4 lista isso como equivalente direto), não mudança de
+  comportamento.
+- Blocos inteiros ausentes de `espooler_*`, `sync_feedback_*` e `heater_*` — conferido
+  que nenhum desses sensores/hardwares está fisicamente instalado nesta Trident (nem na
+  v3, nem na v4) — ausência é limpeza de template, não perda de config real.
+- Renomeações puramente cosméticas confirmadas equivalentes (mesmo valor, nome
+  diferente): `bowden_allowable_load_delta ↔ bowden_allowable_encoder_delta`,
+  `toolhead_move_error_tolerance ↔ bowden_move_error_tolerance` (v4 dividiu em dois,
+  ambos mesmo valor), `preload_attempts ↔ gate_preload_attempts`, cores/nomes de efeito
+  de LED (`effect_heating`, `effect_selecting`, `effect_error`, `effect_checking`).
+
+**⚠️ PENDENTE — precisa de confirmação física ou pesquisa antes de mexer:**
+- **Ordem dos LEDs de "exit" pode estar invertida:** v3 tinha
+  `exit_leds: neopixel:mmu_leds (4-1)` (decrescente), v4 tem `(1-4)` (crescente). Se a
+  fiação física não mudou, isso faria cada gate acender o LED físico errado (ex: gate 0
+  acender o LED que era do gate 3). **Ação sugerida:** olhar fisicamente qual LED acende
+  ao selecionar cada gate e comparar com a posição física real. Não mexi nisso sem
+  confirmação visual, pra não arriscar inverter errado.
+- **`gear_max_velocity` (v3: 300) e `gear_max_accel` (v3: 1500) não encontrados em
+  NENHUM arquivo da v4.** Eram limites físicos de segurança "nunca excedidos independente
+  de outros parâmetros" — não achamos equivalente na v4. Pode ter sido removido de
+  propósito da arquitetura nova (outras validações internas podem ter assumido esse
+  papel) ou ser uma lacuna real. Recomendo pesquisar na documentação/GitHub oficial do
+  Happy Hare v4 antes de decidir se precisa recriar esse limite em algum lugar.
+- **`homing_extruder` (v3: 1) não encontrado na v4** — parâmetro relacionado à
+  possibilidade de homing por stallguard/touch na extrusora (recurso avançado que não
+  usamos, já que usamos o sensor real `extruder_homing_endstop: extruder`). Baixo risco
+  provável, mas fica registrado.
+- **`heater_max_temp` e todo o bloco de secagem/aquecimento da MMU** sumiram da v4, mas
+  como não há heater físico instalado na MMU desta Trident, é esperado/inofensivo.
+
+### 25. Instalação do Decontaminator (dois baldes de purga) - macro alternando entre eles (2026-09-09)
+Usuário imprimiu e instalou o Decontaminator na Trident, com **dois baldes separados**
+(não um só, como antes): balde A em `X0, Y311`, balde B em `X60, Y311`. Ainda não comprou
+a escova de latão do Decontaminator — a escova antiga (usada por `LIMPAR_BICO`, na zona
+`X206-245, Y310`) continua em uso, sem mudança nenhuma.
+
+A página oficial do Decontaminator sugere um exemplo de macro que sorteia uma posição
+X **contínua** entre 0 e 70 a cada purga (pensado pra um balde único e comprido, tipo a
+variante "Micron"). Como o setup daqui é de **dois baldes discretos e separados**, não um
+trough contínuo, adaptei a lógica pra alternar exatamente entre as duas posições reais
+(`X0` e `X60`) em vez de sortear um X qualquer no meio do caminho (que poderia cair fora
+de qualquer um dos dois baldes).
+
+- **Correção em `macros.cfg` (`_MMU_PURGE_CUSTOM`):** adicionada `variable_next_bucket_x`
+  (0 ou 60) que guarda qual balde usar da próxima vez — a macro lê o valor atual, já
+  inverte pra próxima chamada (`SET_GCODE_VARIABLE`), e move pro balde escolhido
+  (`Y311`, no limite físico real do eixo Y confirmado em `steppers.cfg`) antes de chamar
+  `_MMU_PURGE`. Isso garante alternância 50/50 real entre os dois baldes, em vez de
+  aleatório (que pode desbalancear em impressões com poucas trocas de cor).
+- **Não usei os nomes de macro do exemplo oficial** (`MOVE_TO_BUCKET`, `clean_nozzle`) —
+  em vez disso, integrei a lógica dentro da `_MMU_PURGE_CUSTOM` que já existia, pra não
+  duplicar responsabilidade (purga e limpeza de bico continuam sendo uma coisa só, como
+  já era antes).
+- **`LIMPAR_BICO` não foi alterada** — continua limpando na escova antiga
+  (`X206-245, Y310`), por decisão do usuário (ainda não tem a escova nova).
+- **Nota técnica:** `variable_next_bucket_x` é uma variável persistida pelo Klipper
+  dentro da própria macro — sobrevive entre chamadas normalmente, mas **reseta pra 0 a
+  cada `RESTART`** (não é salva em `mmu_vars.cfg` nem em disco). Isso é inofensivo (só
+  significa que depois de todo restart a primeira purga usa sempre o balde X0), não é
+  motivo de preocupação.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, testar uma impressão com pelo
+  menos 2 trocas de cor e confirmar visualmente que a purga alterna entre os dois baldes
+  corretamente e sem colidir com nada. Quando comprar a escova de latão nova do
+  Decontaminator, avisar pra ajustarmos `LIMPAR_BICO` pra usar ela em vez da escova
+  antiga.
+
+### 26. Encoder Binky removido fisicamente - desativado no código (2026-09-12)
+Usuário removeu o encoder Binky (instalado no item 11) fisicamente da Trident — estava
+travando/prendendo o filamento e empurrando o PTFE pra fora do encaixe. Desativado no
+código (comentado, não apagado, pra facilitar reinstalar depois se quiser).
+
+- **`mmu/base/mmu_hardware_unit0.cfg`:**
+  - `[mmu_unit unit0] encoder: unit0 → ` (vazio) — desconecta a unidade MMU do encoder.
+  - Seção `[mmu_encoder unit0]` inteira comentada (pino, resolução, headroom, etc.) —
+    preservada como referência, não apagada.
+- **`mmu/base/mmu_parameters_unit0.cfg`:**
+  - `flowguard_enabled: 1 → 0` — o FlowGuard dependia do encoder (só funciona com
+    encoder OU sensor de sync-feedback/tensão, e nenhum dos dois está instalado agora).
+    Reativado no item 11, desativado de novo aqui.
+  - `skip_cal_encoder: 0 → 1` — não faz sentido pedir calibração de um sensor que não
+    existe mais fisicamente.
+  - `encoder_move_validation: 1 → 0` — não há mais encoder pra validar se o movimento
+    comandado bateu com o movimento real.
+- **Não mexido (fica órfão, mas inofensivo):** `gate_endstop_to_encoder`,
+  `flowguard_encoder_mode`, `flowguard_encoder_max_motion`, `bowden_allowable_encoder_delta`
+  — todos parâmetros só usados quando há encoder, ignorados agora sem erro.
+- **`mmu_unit0_encoder_resolution`/`mmu_unit0_encoder_clog_length` em `mmu_vars.cfg`** —
+  não apagados, ficam só sem uso (não fazem mal, é só histórico de calibração antiga).
+
+**⚠️ PENDENTE (ação do usuário) - recalibração completa pedida pelo usuário:**
+Depois do `git pull --rebase` + `RESTART` no Pi, rodar nessa ordem:
+```
+MMU_STATUS                      # confirma que não sobrou nenhum erro/aviso de encoder
+MMU_CALIBRATE_GEAR               # recalibra rotation_distance da engrenagem (agora sem encoder pra medir - vai usar o método alternativo por marcação manual de filamento, o console explica o passo a passo)
+MMU_CALIBRATE_GATE GATE=1        # repete pros gates 1, 2 e 3
+MMU_CALIBRATE_GATE GATE=2
+MMU_CALIBRATE_GATE GATE=3
+MMU_CALIBRATE_BOWDEN BOWDEN_LENGTH=1300   # recalibra o comprimento do bowden (usa o Extruder Sensor pra homing, não precisa de encoder)
+```
+Nota: sem encoder, `MMU_CALIBRATE_GEAR`/`MMU_CALIBRATE_GATE` usam um método diferente
+de medição (marcação manual do filamento com caneta/fita, avançar uma distância
+conhecida e comparar visualmente) em vez de comparar com a leitura do encoder — o
+próprio console guia o processo passo a passo quando o comando é rodado. Sugiro colar o
+output de cada comando aqui pra eu acompanhar e confirmar que os valores fazem sentido.
+
+### 27. Sensor "Extruder" (default:extruder) falso runout pausando impressões (2026-09-12)
+Últimas impressões pausavam sozinhas com "Filament runout occurred at extruder. Manual
+intervention is required", mesmo com filamento presente de verdade. Usuário precisava ir
+manualmente desativar o sensor pelo botão do Mainsail pra impressão continuar.
+
+- **Causa confirmada no `mmu.log`:** o sensor `default:extruder` (entrada da extrusora,
+  `ebb36:PB6`) fica disparando inserção/remoção repetidas vezes em poucos segundos
+  (`__MMU_SENSOR_INSERT` às 02:05:39, 02:05:48, 02:05:57, 02:06:01...) — clássico de
+  microswitch com mau contato/sujeira, não filamento saindo de verdade. Em dois momentos
+  isso foi interpretado como runout real e pausou a impressão (`02:33:40` e `02:50:14`).
+  Mesmo suspeita física do usuário: sensor com defeito, precisa desmontar a cabeça pra
+  inspecionar (sem tempo agora).
+- **Decisão do usuário:** não desativar o sensor permanentemente (ele ainda ajuda a
+  confirmar que o filamento entrou certo no carregamento) — só não deixar ele causar
+  pausa **durante a impressão**.
+- **Correção em `mmu/base/mmu_macro_vars.cfg` (`_MMU_SEQUENCE_VARS`):**
+  - `variable_user_pre_load_extension`: `SET_FILAMENT_SENSOR SENSOR=default:extruder ENABLE=1`
+    — reativa o sensor logo antes de qualquer carregamento (print ou standalone).
+  - `variable_user_post_load_extension`: `SET_FILAMENT_SENSOR SENSOR=default:extruder ENABLE=0`
+    — desativa de novo assim que o carregamento termina, antes da impressão continuar.
+  - Comando confirmado testando no console (`SET_FILAMENT_SENSOR SENSOR=default:extruder
+    ENABLE=0/1` — o Klipper rejeitou `SENSOR=extruder` sozinho, sugerindo o nome certo
+    `default:extruder`).
+  - Resultado esperado: sensor ativo só durante o carregamento (útil pra homing/detecção),
+    desligado o resto do tempo — não pode mais gerar falso runout no meio da impressão.
+    O sensor "Toolhead" continua ativo o tempo todo (é o mais confiável dos dois).
+- **⚠️ PENDENTE (ação do usuário):** ainda é preciso desmontar a cabeça e inspecionar o
+  microswitch/conector do "Extruder Sensor" fisicamente quando sobrar tempo — essa
+  automação só evita o sintoma (pausa no meio da impressão), não resolve a causa raiz
+  (contato ruim). Também confirmar depois do `RESTART` que o carregamento normal continua
+  funcionando (o sensor precisa estar ativo bem na hora do homing pro
+  `extruder_homing_endstop: extruder` funcionar).
+
+### 28. Outras anomalias encontradas revisando os logs a fundo (2026-09-12)
+A pedido do usuário, revisão completa do `mmu.log`/`klippy.log` anexados (além do
+problema do sensor da extrusora, já resolvido no item 27). Achados:
+
+- **`Warning: Selector angles not found in mmu_vars.cfg. Using configured defaults`** —
+  aparecia em TODO restart. Causa: `mmu_vars.cfg` tinha `mmu_selector_angles` (sem
+  prefixo), mas a v4 espera `mmu_unit0_selector_angles` (mesmo padrão de
+  `mmu_unit0_bowden_lengths`/`mmu_unit0_gear_rotation_distances`/`mmu_unit0_encoder_resolution`
+  — todo dado calibrado por-unit leva o prefixo `unit0_` na v4). Isso não estava causando
+  problema na prática só por coincidência (o valor calibrado `[60,0,180,120]` é igual ao
+  default já configurado em `servo_gate_angles`), mas se um dia o seletor for recalibrado
+  de verdade (`MMU_CALIBRATE_SELECTOR`), o valor novo NUNCA seria reconhecido no próximo
+  restart, sempre voltando pro default do config. **Corrigido:** renomeado em
+  `mmu/mmu_vars.cfg` pra `mmu_unit0_selector_angles`.
+- **Gate 0 falhou em carregar filamento 3 vezes** ("filament did not reach gate homing
+  sensor" / "Couldn't pick up filament at gate") em momentos diferentes do log. Não é bug
+  de config — ou o gate 0 estava fisicamente sem filamento, ou há um problema mecânico de
+  captação específico desse gate (seletor desalinhado, etc). O usuário já contornou
+  remapeando T0 pro gate 1 via TTG map. **⚠️ PENDENTE (ação do usuário):** quando puder,
+  verificar fisicamente o gate 0 (tem filamento? entra bem quando empurrado manualmente?)
+  e testar `MMU_PRELOAD GATE=0`.
+- **`Shutdown due to webhooks request` (Klipper inteiro, não só o MMU) às 01:59:49** —
+  investigado no `klippy.log`: veio de uma chamada `emergency_stop` via API do Moonraker
+  (`"method":"emergency_stop"`), não de falha de hardware/MCU/comunicação. Bate com o
+  usuário provavelmente clicando o botão de emergência no Mainsail no meio da sequência
+  de pausas seguidas que estava tendo naquele momento. **Não é bug, não precisa de ação.**
+- **`Warning: Looks like slicer is setup with 3 extruders but your MMU has 4 gates`** —
+  cosmético, o perfil do OrcaSlicer está configurado com 3 extrusoras em vez de 4 (pra
+  bater com os 4 gates da MMX). Não bloqueia nada ("will attempt to continue"), mas se
+  quiser silenciar o aviso, é só ajustar esse número no perfil da impressora no Orca.
+
+### 29. Limpeza de variáveis órfãs da v3 no mmu_vars.cfg (2026-09-12)
+A pedido do usuário, removidas do `[Variables]` de `mmu/mmu_vars.cfg` as variáveis que
+sobraram da cópia manual feita na migração v3→v4 (item 16) e que a v4 nunca leu de
+verdade — confirmado ao longo da sessão que ficaram **estáticas** (nunca mudaram de
+valor) enquanto as equivalentes com prefixo `unit0_` cresciam normalmente com o uso real:
+- `mmu_calibration_bowden_home` (v4 usa `mmu_unit0_bowden_home`)
+- `mmu_calibration_bowden_lengths` (v4 usa `mmu_unit0_bowden_lengths`)
+- `mmu_calibration_clog_length` (v4 usa `mmu_unit0_encoder_clog_length`)
+- `mmu_encoder_resolution` sem prefixo (v4 usa `mmu_unit0_encoder_resolution`)
+- `mmu_statistics_gate_0` a `_3` sem prefixo (v4 usa `mmu_unit0_statistics_gate_0..3`)
+
+**Não removido** (confirmado ainda em uso real, atualiza a cada impressão):
+`mmu_statistics_swaps` e `mmu_statistics_counters` (não têm equivalente com prefixo
+`unit0_` — são estatísticas gerais da máquina, não por-unit), e todas as `mmu_state_*`/
+`mmu_extruder_state_*` (refletem o estado atual real da MMU).
+
+### 30. Ajuste de parking: menos tempo parado em cima da peça, cancelar mais previsível (2026-09-12)
+Usuário reportou que o cabeçote ficava parado em cima da peça depois de trocar de
+filamento/cortar (risco de escorrer filamento), e que cancelar a impressão parecia ir
+pra um canto "aleatório" da mesa.
+
+- **Causa do "cima da peça":** `variable_restore_xy_pos: 'last'` fazia o cabeçote voltar
+  exatamente pra onde estava antes da troca (em cima da peça) e ficar ali até a impressão
+  retomar. **Corrigido:** `'last' → 'next'` — agora vai direto pro próximo ponto de
+  extrusão em vez de voltar pro último, reduzindo o tempo parado numa posição (recurso
+  documentado no próprio Happy Hare especificamente pra reduzir blobbing).
+- **Causa do "canto aleatório" no cancelamento:** `variable_park_cancel` tinha
+  `x,y = -999,-999` (= "não mover") — ao cancelar, o cabeçote ficava exatamente onde
+  estava no momento do cancelamento, por isso parecia aleatório (dependia de onde a
+  impressão estava). **Corrigido:** `-999,-999 → 50,50` — agora sempre vai pro mesmo
+  canto fixo, igual já acontecia com pausa (`park_pause`) e conclusão (`park_complete`).
+- **Não mexido (explicado ao usuário, é necessário):** a posição antes de iniciar a
+  impressão (canto do `G28`/homing + `LIMPAR_BICO`) e os pontos de troca/corte (baldes
+  do Decontaminator em X0/X60,Y311, corte perto de X10,Y310) são fixos por necessidade
+  física — são posições reais de hardware (endstops, balde, escova), não dá pra tornar
+  "dinâmico".
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, testar uma impressão com troca
+  de cor e confirmar que o cabeçote não fica mais parado em cima da peça, e testar um
+  cancelamento pra confirmar que vai sempre pro mesmo canto (50,50).
+
+### 31. Escova de latão do Decontaminator instalada - LIMPAR_BICO atualizada (2026-09-13)
+Usuário comprou e instalou a escova de latão do Decontaminator (item 25 - antes usava a
+escova antiga, provisória). Posição física medida: `Y304`, varrendo de `X52` (início) até
+`X15` (fim) — fica bem entre os dois baldes de purga (`X0` e `X60`, `Y311`, item 25).
+
+- **Correção em `macros.cfg` (`LIMPAR_BICO`):** trocado o alvo de limpeza da escova
+  antiga (`X206-245, Y310`) pra escova de latão nova (`X15-52, Y304`), mantendo o mesmo
+  padrão de 3 passadas de vai-e-vem.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, rodar `LIMPAR_BICO` manualmente
+  (ou deixar rodar no próximo `PRINT_START`) e confirmar visualmente que o bico realmente
+  encosta na escova nova ao longo do trecho X15-52 em Y304, sem bater em nada.
+
+### 32. Bico encostando na mesa durante Z_TILT_ADJUST/homing - `descend_z` apertado (2026-09-23)
+Usuário relatou (problema antigo, não recente) que o bico encosta na mesa e deposita
+material derretido durante `Z_TILT_ADJUST`/home do Z — mesmo a sonda sendo sem contato
+(BTT Eddy). Minha primeira hipótese (calibração desatualizada por causa da desmontagem
+recente da cabeça) **estava errada** — o usuário confirmou que isso já acontecia desde
+antes. Causa real, confirmada na documentação oficial do Klipper:
+
+- **`descend_z`** (`toolhead.cfg`, `[probe_eddy_current btt_eddy]`) — parâmetro que
+  define "a distância nominal entre o bico e a mesa em que uma sondagem deve parar".
+  Vale pra **toda sondagem que usa essa sonda** (home do Z, `Z_TILT_ADJUST`, malha da
+  mesa) porque é um valor único do objeto da sonda, não por operação.
+- Estava em `0.5mm` — apertado demais pra uma sonda sem contato; qualquer folga
+  mecânica/variação térmica pequena já é suficiente pra encostar de verdade.
+- **Corrigido:** `descend_z: 0.5 → 2.0mm`.
+- **Nota separada (não é a causa deste problema, mas ainda vale considerar):** como a
+  cabeça foi desmontada recentemente (item anterior), a tabela de calibração
+  frequência→distância da sonda pode estar um pouco desatualizada de qualquer forma.
+  Rodar `PROBE_EDDY_CURRENT_CALIBRATE_AUTO` (já existe pronta em `toolhead.cfg`) em
+  algum momento é uma boa prática depois de mexer fisicamente na cabeça, mas não é o
+  que estava causando o toque na mesa.
+- **⚠️ PENDENTE (ação do usuário):** depois do `RESTART`, testar `Z_TILT_ADJUST` (ou
+  simplesmente `PRINT_START`) e confirmar que o bico não encosta mais na mesa.
+
+### 33. Cores trocadas numa impressão multi-cor - preprocessador do Moonraker estourando timeout (2026-10-01)
+Usuário reportou uma impressão de 4 cores que começou certa e foi "enlouquecendo" as
+cores no meio (cabelo que devia ser marrom saiu branco, roupa branca saiu preta, etc).
+
+- **Não era bug do MMU/config da impressora** — conferido no `mmu.log`: o mapa
+  ferramenta→gate (T0→gate0, T1→gate1, T2→gate2) ficou estável a impressão inteira, sem
+  nenhuma troca automática/EndlessSpool no meio.
+- **Causa raiz encontrada no próprio `.gcode`:** o "Start G-code" customizado no Orca
+  (bloco "--- START G-CODE OFICIAL HAPPY HARE ---") usa `MMU_START_SETUP` com
+  placeholders tipo `!colors!`, `!temperatures!`, `!materials!`, `!total_toolchanges!`,
+  `!referenced_tools!`, `!filament_names!`, `!purge_volumes!` — esses **não são
+  placeholders nativos do Orca** (diferente de `{initial_tool}`/`{total_layer_count}`,
+  que são e funcionam normal). Eles dependem de um **pré-processador do próprio
+  Moonraker** (`[mmu_server] enable_file_preprocessor`) que escaneia o arquivo depois do
+  upload e substitui esses tokens pelos valores reais.
+- Esse pré-processador **já estava habilitado** no `moonraker.conf`
+  (`enable_file_preprocessor: True`) — não era isso. O problema real: **o Moonraker tem
+  um timeout padrão de só 20 segundos** pra esse processamento (documentado no wiki
+  oficial do Happy Hare), e pra um gcode grande (essa impressão tinha 158 camadas, 6h10)
+  o processamento estourava esse tempo e **falhava silenciosamente**, deixando os
+  placeholders sem substituir — o Happy Hare recebeu literalmente a string `"!colors!"`
+  em vez das cores de verdade, e sem essa informação não conseguiu validar/estabelecer
+  direito qual cor ia em qual gate pra essa impressão específica.
+- **Correção em `moonraker.conf`:** adicionada seção `[file_manager]` com
+  `default_metadata_parser_timeout: 120` (padrão era 20s).
+- **⚠️ PENDENTE (ação do usuário):** depois do `git pull` + **reiniciar o Moonraker**
+  (não é `RESTART` do Klipper, é o serviço `moonraker-Trident` mesmo — pode reiniciar
+  pelo Mainsail em Configurações → Reiniciar Moonraker, ou `sudo systemctl restart
+  moonraker-Trident` via SSH), **fatiar de novo e fazer um upload novo** do gcode (o
+  pré-processamento só roda no momento do upload, não ao reimprimir um arquivo já
+  carregado antes da correção). Confirmar visualmente que as cores saem certas dessa vez.
+
+### 34. Gate errado selecionado por emperramento físico no seletor servo (2026-10-01)
+Impressão saiu com a cor errada (devia começar com marrom/T1/gate1, saiu branco) mesmo
+com todo o mapeamento TTG/slicer confirmado correto no log (`MMU_SLICER_TOOL_MAP TOOL=1
+COLOR=804040`, `Selecting tool T1 on gate 1`, `Tool T1 enabled`). Usuário investigou
+fisicamente e achou a causa: uma portinha do seletor emperrou, e o servo (sem nenhum
+feedback físico de posição) assentou na posição errada mesmo recebendo o comando certo.
+
+- **Confirmado: é um problema conhecido da comunidade Happy Hare**, não bug de config —
+  o seletor da MMX é um servo PWM "cego" (sem hard-stop nem sensor de confirmação), então
+  qualquer atrito mecânico leve pode fazer ele assentar errado sem avisar ninguém.
+- **Ação física (usuário, fora deste repo):** limpar/lubrificar a portinha que emperrou,
+  depois rodar `MMU_CALIBRATE_SELECTOR` pra recalibrar os ângulos com precisão.
+- **Correção em `mmu/base/mmu_parameters_unit0.cfg`** (mitigação extra, não substitui o
+  conserto físico):
+  - `servo_duration: 0.6 → 0.8` (mais tempo de sinal PWM pra vencer resistência leve)
+  - `servo_dwell: 1.0 → 1.5` (mais tempo de espera antes do próximo movimento)
+- **⚠️ PENDENTE (ação do usuário):** fazer a manutenção física da portinha, recalibrar o
+  seletor, e testar algumas trocas de gate pra confirmar que não volta a selecionar
+  errado. Se persistir mesmo com a folga extra de tempo, o problema é mecânico de
+  verdade e precisa de reparo/ajuste físico no mecanismo do seletor.
+
+**Causa raiz real, identificada pelo usuário no mesmo dia:** não era só a portinha —
+quando o servo desce pra engatar as engrenagens tipo BMG (pressionar o filamento), se as
+duas engrenagens estiverem **paradas** no momento do engate, pode acontecer de um dente
+"casar" exatamente em cima do outro (ponta com ponta) em vez de encaixar no vão — travando
+o encaixe e fazendo o servo forçar/patinar. Confirmado como problema **conhecido e
+documentado** da comunidade Happy Hare/ERCF, com solução oficial pronta:
+
+- **Tentativa em `mmu/base/mmu_parameters_unit0.cfg`:** adicionado
+  `servo_buzz_gear_on_down: 3` — faz a engrenagem "chacoalhar" (girar um pouquinho pra lá
+  e pra cá, +0.8mm/-0.8mm por ciclo, confirmado no código-fonte do Happy Hare) bem na
+  hora que o servo está descendo pra engatar, assim mesmo que os dentes se encontrem
+  errado no primeiro instante, a vibração ajuda eles a se acomodarem no lugar certo
+  rapidinho. Valor padrão de fábrica das versões recentes do Happy Hare é `3` (faixa
+  válida 0-10).
+- **❌ REVERTIDO no mesmo dia — quebrou a impressora:** o Klipper recusou o parâmetro
+  (`Option 'servo_buzz_gear_on_down' is not valid in section 'mmu_unit_parameters
+  unit0'`, impressora ficou em estado "halted"). Confirma que a **versão do Happy Hare
+  atualmente instalada é mais antiga que a versão em que esse parâmetro foi introduzido**
+  — não é erro de digitação/seção, o recurso simplesmente não existe ainda nesta
+  instalação. Comentado no arquivo (não apagado) com nota explicando o motivo.
+- **Nunca esteve configurado antes** (nem na v3, nem na v4) — não é perda de migração.
+- **Conclusão acima estava errada (corrigida no item 35):** não era versão — o parâmetro
+  só existe na classe `LinearServoSelector`, nunca na `ServoSelector` usada pela MMX.
+
+### 35. Módulo próprio `servo_gear_buzz` - mexida da engrenagem no engate do servo (2026-10-01)
+O problema do item 34 (engrenagens paradas engatando dente-com-dente, servo patinando e
+acumulando erro até selecionar o gate errado, sem o Klipper detectar) estava impedindo
+impressões coloridas (uma tinha 200+ trocas). Lendo o código-fonte do Happy Hare (`main`):
+
+- `selector_type: ServoSelector` (classe oficial da MMX/PicoMMU) faz o engate em
+  `_grip_release()` → `_set_servo_angle()`, que só manda o servo e espera
+  (`movequeue_dwell`). Não mexe a engrenagem.
+- A classe `LinearServoSelector` tem `servo_buzz_gear_on_down`: manda o servo e, **antes**
+  da espera, enfileira `move_filament(+0.8)` / `move_filament(-0.8)` N vezes com
+  `suppress_grip_change=True` e `accel=gear_buzz_accel`, preservando a distância do
+  encoder. Por isso a engrenagem gira enquanto o servo ainda está descendo.
+- Todas essas funções são do controlador central/unidade, então também existem pra
+  `ServoSelector`. Trocar o `selector_type` não funciona (a `LinearServoSelector` espera
+  um motor de seletor linear que a MMX não tem).
+
+**Solução:** módulo Klipper próprio, `trident/extras/servo_gear_buzz.py` (seção
+`[servo_gear_buzz]` em `trident/servo_gear_buzz.cfg`, incluída no `printer.cfg`):
+- Envolve `ServoSelector._grip_release` só no engate (não na soltura). Quando o servo vai
+  mudar de ângulo, instala um gancho de uso único no `movequeue_dwell` do controlador que
+  roda a mesma sequência de mexidas oficial entre o comando do servo e a espera.
+- Não altera nenhum arquivo do Happy Hare (atualizações dele não apagam a correção).
+- Defensivo: se a classe/funções não existirem na versão instalada, desativa a mexida e
+  registra aviso no `klippy.log`, sem travar nada. Sem recursão (exige
+  `suppress_grip_change`), não roda em comandos de teste, não aplica patch duas vezes após
+  `RESTART`.
+- Simulado localmente com cópia da lógica do `ServoSelector`: ordem confirmada
+  `servo → mexidas → espera`.
+- `buzz_count: 5`, `buzz_distance: 0.8`, `buzz_speed: 25`. Ajuste ao vivo:
+  `SERVO_GEAR_BUZZ COUNT=n DISTANCE=mm SPEED=mm/s` (sem parâmetro, só mostra o status e
+  quantos engates tiveram mexida desde o restart).
+
+**Instalação no Pi (uma vez, e de novo se o Pi/Klipper for reinstalado):**
+```
+cd ~/klipper_backups && git pull --rebase origin main
+ln -sf /home/biqu/printer_Trident_data/config/extras/servo_gear_buzz.py /home/biqu/klipper/klippy/extras/servo_gear_buzz.py
+sudo systemctl restart klipper-Trident
+```
+(`RESTART` pelo console não recarrega um módulo Python novo/alterado — usar o
+`systemctl restart` sempre que o `.py` mudar.)
+
+- **⚠️ PENDENTE (ação do usuário):** depois de instalar, rodar `SERVO_GEAR_BUZZ` no console
+  e confirmar `ativo (5 x +/-0.80mm a 25mm/s)`. Fazer várias trocas de gate e olhar a
+  engrenagem tremer no engate; depois de algumas trocas, `SERVO_GEAR_BUZZ` deve mostrar o
+  contador subindo. Se aparecer `DESATIVADO`, mandar o `klippy.log`.
+
+### 36. Automap de cores por gate (2026-10-01)
+Gates ficavam cinza (cor desconhecida) e as ferramentas do fatiador não eram casadas com a
+cor real dos filamentos (`MMU_SLICER_TOOL_MAP ... AUTOMAP=none`).
+- `mmu_macro_vars.cfg`: `variable_automap_strategy: 'none' → 'closest_color'` — o
+  `MMU_START_SETUP` passa a ajustar o TTG map pelo gate cuja cor cadastrada é mais próxima
+  da cor pedida pelo Orca (todos os filamentos têm o mesmo nome/material, então só a cor
+  diferencia).
+- Depende de cada gate ter COR cadastrada (`MMU_GATE_MAP GATE=n COLOR=RRGGBB`). O
+  `MMU_EJECT` limpa o cadastro do gate ("Clearing gate map"), então a cor precisa ser
+  refeita ao trocar o carretel, não a cada impressão.
+- **⚠️ PENDENTE:** cadastrar as cores dos 4 gates, subir/aplicar, testar com a impressão de
+  4 cores e conferir no log (`Slicer MMU Tool Summary`) o gate escolhido para cada T.
+
+### 37. Ajuste do `servo_gear_buzz`: mexida de 1mm e servo mais lento (2026-10-01)
+Teste real da correção do item 35: resolveu em parte, mas o servo ainda é rápido demais e
+às vezes dá pancada/barulho no engate.
+- `buzz_distance: 0.8 → 1.0` (mm de cada lado, em `servo_gear_buzz.cfg`).
+- **Velocidade do servo:** o `mmu_servo` do Happy Hare não tem controle de velocidade (manda o
+  ângulo final e o servo vai na velocidade máxima). O módulo agora divide o movimento em passos
+  de `servo_step` graus (3°) com rajadas PWM curtas, a `servo_speed` graus/s (90°/s → um
+  movimento de 90° leva ~1,2s). `servo_speed: 0` volta à velocidade máxima. Os passos
+  intermediários rodam antes do movimento final original, que continua fazendo o último
+  passo, a mexida da engrenagem e a espera.
+- Ajuste ao vivo: `SERVO_GEAR_BUZZ SERVO_SPEED=60 DISTANCE=1.0` (sem parâmetro só mostra o
+  status). Persistir o valor bom editando `servo_gear_buzz.cfg`.
+- Simulado localmente (30 passos de 3°, ordem rampa → servo final → mexida → espera). **Não
+  testado no hardware:** a suavização é aproximada (o servo recebe só rajadas curtas).
+- Como o `.py` mudou: no Pi, `sudo systemctl restart klipper-Trident` (o `RESTART` não recarrega).
+- **⚠️ PENDENTE:** testar `MMU_SELECT GATE=...` entre gates distantes. Se continuar
+  batendo, baixar `SERVO_SPEED` (60, 40); se o servo ficar mole/errar posição, subir.
+
+### 38. Mexida da engrenagem durante o giro do servo (2026-10-01)
+O seletor é um came: para ir de um gate a outro o servo varre as posições intermediárias, e
+a mexida só acontecia depois de chegar ao gate final (dava tempo de travar no meio do caminho).
+- `servo_gear_buzz.py`: durante a rampa do servo (item 37), a cada `sweep_buzz_degrees`
+  (12°) de curso, faz um ciclo +/-`buzz_distance` na engrenagem; só ao engatar (grip), nunca
+  na soltura. A mexida do fim (`buzz_count`) continua. Só funciona com `servo_speed > 0`
+  (é a rampa que abre espaço para intercalar as mexidas).
+- Ajuste ao vivo: `SERVO_GEAR_BUZZ SWEEP=8` (menor = mais mexidas; 0 = só no fim).
+  `SERVO_GEAR_BUZZ` sem parâmetros mostra também quantas mexidas durante o giro já ocorreram.
+- Simulado: de 90° a 0° saem 7 ciclos no meio do giro + 3 no fim; nenhuma na soltura.
+- **Não testado no hardware.** Incerteza: se os movimentos da engrenagem acompanham o tempo
+  dos passos do servo (as mexidas ficam enfileiradas no motor de arrasto e podem atrasar um
+  pouco em relação ao giro). Se aparecer ruído/atraso estranho, `SWEEP=0` desliga isso.
+- Instalar: `git pull`, `sudo systemctl restart klipper-Trident`.
+- `servo_speed` ajustado de 90 para **120°/s** (90° de giro ≈ 0,9s) — a 90°/s o usuário achou
+  um pouco lento. Valor define a velocidade do giro; maior = mais rápido.
+
+### 39. Automap desativado e comportamento do bypass (2026-10-04/05)
+- **Automap:** `variable_automap_strategy` voltou de `'closest_color'` para **`'none'`**
+  (`mmu_macro_vars.cfg`). Com `closest_color` todo print pausava com "Error during automapping
+  ... Available are: ['', '', '', '']" quando o mapa de gates estava vazio (material/cor não
+  cadastrados). Com `'none'` T0..T3 vão direto para os gates 0..3 (o item 36 fica só como
+  histórico). Os cadastros de cor/material continuam servindo para exibição.
+- **Bypass:** o `MMU_END` descarrega a ferramenta no fim do print enquanto
+  `variable_unload_tool: True` (também no bypass), e o estado "bypass carregado" não é salvo
+  entre prints nem entre restarts. Para imprimir pelo bypass é preciso
+  `MMU_RECOVER TOOL=-2 LOADED=1` (ou `MMU_SELECT BYPASS=1` + `MMU_LOAD`). "Operation not
+  possible because bypass angle is not configured" é inofensivo (`servo_bypass_angle: -1`).
+- **⚠️ PENDENTE (decisão):** deixar o filamento do bypass no bico ao fim do print (macro antes
+  do `MMU_END` desligando `unload_tool` quando `printer.mmu.tool == -2`, precisa do End G-code
+  do Orca) ou `variable_unload_tool: False` para tudo.
+
+### 40. Z-offset: referência de Z pelo contato do bico (tap da Eddy) (2026-10-06)
+**Diagnóstico:** o usuário ajustava o Z-offset na mão a cada print. O `PROBE_EDDY_CURRENT_TAP_CALIBRATE`
+mostrou que o Z=0 do homing por frequência estava **~0,045 mm acima da mesa** (contato em
+Z=-0,0445; 5 amostras entre -0,0377 e -0,0503). A calibração por folha de papel deixa ~0,05-0,1 mm
+de folga; o tap mede o contato real e não deriva com a temperatura.
+- Klipper v0.13.0-786 (30/09/2026) já tem tap (`tap_threshold` aparece 27x no
+  `probe_eddy_current.py`). `tap_threshold: 3574.741` gravado pelo `SAVE_CONFIG` (bloco do
+  `printer.cfg`). `position_min: -2` do `stepper_z` já permitia o contato.
+- `macros.cfg`: `AJUSTAR_Z_TAP` (tap no ponto X150 Y125 = sonda em `zero_reference_position`
+  150,150; recusa bico >175C e contato fora de ±0,3 mm) + `_AJUSTAR_Z_TAP_APLICA` (parte 2
+  separada porque o Jinja só enxerga o resultado do `PROBE` depois que ele roda; corrige com
+  `SET_KINEMATIC_POSITION Z = z_atual - contato`). Lê `printer.probe.last_probe_position.z`
+  (o `last_z_result` está deprecated). Tap com `SAMPLES=3 SAMPLES_TOLERANCE=0.02
+  SAMPLES_TOLERANCE_RETRIES=2 SAMPLES_RESULT=median`.
+- `PRINT_START`: home, mesa, `LIMPAR_BICO` com bico a **150C**, `Z_TILT_ADJUST`, `G28 Z`,
+  `SET_GCODE_OFFSET Z=0`, `AJUSTAR_Z_TAP`, **malha `rapid_scan` ainda a 150C**, só então aquece o
+  bico até a temperatura de impressão e limpa de novo.
+- `tap_z_offset` (`toolhead.cfg`, `[probe_eddy_current btt_eddy]`) compensa a dilatação do bico
+  entre o tap (150C) e a impressão (~240C). **Negativo sobe o bico.** Primeira camada saiu baixa/
+  rugosa com 0; -0,05 ainda baixa; o usuário ajustou para **-0,09** direto no Pi.
+- Testado: `AJUSTAR_Z_TAP` corrige em +0,0406; segunda rodada dá +0,0015 (≈0); `PRINT_START`
+  roda sem erro.
+- Para ajustar fino sem editar arquivo: baby step na primeira camada, depois
+  `Z_OFFSET_APPLY_PROBE METHOD=tap` + `SAVE_CONFIG` (tirar antes a linha `tap_z_offset` do
+  `toolhead.cfg`, senão o Klipper reclama de duplicata).
+
+### 41. Revisão geral de melhorias + Bloco A + input shaper (2026-10-07)
+Pesquisa em 4 frentes (Klipper/Eddy, boas práticas Trident/Eddy Duo, qualidade de impressão,
+Pi/CAN/Moonraker/Happy Hare). **Encoder Binky foi removido em 12/09 e o FlowGuard está em 0**
+(um dos relatórios assumiu o contrário — descartado).
+- **Bloco A aplicado:** `max_z_velocity` 5→15 e `max_z_accel` 100→300 (a doc do tap exige >35 e
+  recomenda 300; `homing_speed` do Z fixado em 5 para o homing continuar lento), `z_tilt retries`
+  2→5, `[bed_mesh] scan_overshoot: 8`, tap com tolerância/mediana, malha antes de esquentar.
+- **Pressure advance:** o Orca já manda `SET_PRESSURE_ADVANCE` por filamento (PETG 0,064, fluxo
+  0,93). Mesmo assim `pressure_advance: 0.064` + `smooth_time: 0.040` agora são o **padrão** no
+  `[extruder]` (vale se o filamento não mandar nada). É estado: persiste até o RESTART. Não
+  resetamos no `PRINT_START` porque, se o Orca mandar o PA *antes* do `PRINT_START`, o reset
+  apagaria o valor do filamento (TPU). Verificar no `.gcode` a ordem das duas linhas.
+- **Input shaper refeito** (correias estavam folgadas e foram apertadas): X `mzv` **70,4 Hz**,
+  Y `mzv` **51,0 Hz**, vibração 0,0% nos dois (ZV: 3,2% no Y, 11,6% no X). `max_accel` sugerido
+  pelo Klipper: **Y ≤ 7700, X ≤ 14600**. (Minha conta própria dava 4300 no Y — estava errada
+  para esta versão do Klipper; vale o número que o Klipper mede.) Y baixo (51 Hz) é esperado em
+  CoreXY com gantry pesado; não indica sozinho correia frouxa.
+- **Pi/CAN:** Klipper recomenda `txqueuelen 128` (não 1024) em `/etc/network/interfaces.d/can0`.
+- **⚠️ PENDENTE / não aplicado:** `max_accel` 8000→~7500 (limite do Y); ringing tower
+  (`TUNING_TOWER COMMAND=SET_VELOCITY_LIMIT PARAMETER=ACCEL START=3000 STEP_DELTA=500
+  STEP_HEIGHT=5`, shaper ligado); teste de perda de passos para achar a aceleração de
+  deslocamento; PID do bico a 240C; verificar `rotation_distance` do extrusor; `descend_z` 4,0 vs
+  2,0 com `PROBE_ACCURACY`; alerta no celular (`[notifier]`); `pinned_commit` do Klipper/Happy
+  Hare; malha adaptativa (`ADAPTIVE=1`); `max_validation_temp` do `temperature_probe` se a
+  câmara esquentar; Shake&Tune só por instalação manual (o instalador mexe em serviços que não
+  existem neste Pi).
+- **⚠️ ABERTO:** pontinhos/furinhos na borda do piso sólido da primeira camada (face contra a
+  mesa) continuam mesmo com correias apertadas, tap e PA já ativos. "Sobreposição de
+  preenchimento/parede" está em 15% (Processo > Resistência) — a doc só recomenda 10-15% e ela
+  vale para preenchimento esparso, talvez nem alcance o piso sólido. Pedir foto de perto da borda.
+
+## Checklist de pendências pro usuário confirmar
+
+- [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
+      (ver item 6).
+- [ ] Opcional: zerar de vez o "volume de ramming" em Filament Settings → Multimaterial
+      no OrcaSlicer (item 5) — não crítico, já está seguro.
+- [ ] Testar impressão completa com troca de cor na v4 (item 16) pra confirmar
+      estabilidade da migração.
+- [ ] Rodar os comandos de calibração pendentes do item 17 (encoder, gates 1-3, bowden).
+- [ ] Decidir e configurar `endless_spool_groups` (item 17) se quiser EndlessSpool
+      funcionando de verdade.
+- [ ] Atualizar o "Tool Change G-code" no OrcaSlicer (item 17) com os parâmetros extras
+      `SLICER_RETRACTION`/`SLICER_FW_RETRACTION` recomendados oficialmente pra v4.
+- [ ] Decidir se quer trocar `channel: dev` para algo mais estável no `moonraker.conf`.
+- [ ] Reencaixar o PTFE no hub (verificar trava/collet) e rodar `MMU_CALIBRATE_BOWDEN
+      BOWDEN_LENGTH=1300` de novo antes de imprimir (item 21 — `autotune_bowden_length`
+      inflou o valor calibrado e já foi desativado, mas falta a recalibração física).
+- [ ] Conferir visualmente se a ordem dos LEDs de gate está certa (item 24 — pode estar
+      invertida desde a migração pra v4).
+- [ ] Pesquisar se `gear_max_velocity`/`gear_max_accel` (limites de segurança da v3)
+      têm equivalente na v4, ou se precisam ser recriados em algum lugar (item 24).
+- [ ] Testar uma impressão com troca de cor pra confirmar que o FlowGuard (reativado no
+      item 24), a macro de purga customizada e as posições de parking restauradas estão
+      funcionando bem juntas.
+
+## Dicas úteis pra próxima sessão
+
+- Sempre `git pull --rebase origin main` antes de editar (cron de backup pode ter
+  avançado o remoto).
+- Não confundir os arquivos symlink (mostram só um caminho de texto quando lidos aqui)
+  com arquivos reais — ver lista na seção de estrutura do repo.
+- Para qualquer dúvida sobre parâmetros do Happy Hare, os comentários dentro de
+  `mmu_parameters.cfg` e `mmu_macro_vars.cfg` são bem detalhados e específicos por
+  fabricante de MMU (inclusive citam "A4T-A4C" que é a família do cabeçote do usuário).
+- O usuário acessa o Pi via SSH e a impressora via Mainsail — não tem tela física
+  (nem BTT Pad nem KlipperScreen físico usado no fluxo de trabalho comum).
