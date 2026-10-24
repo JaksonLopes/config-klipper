@@ -2,7 +2,7 @@
 
 > Documento de contexto para futuras sessões. Resume o que foi diagnosticado e corrigido,
 > o que ficou pendente, e armadilhas conhecidas desse setup específico.
-> Última atualização: sessão de 2026-08-08.
+> Última atualização: sessão de 2026-10-24 (migração para CAN).
 >
 > Ver também [`CLAUDE.md`](../CLAUDE.md) na raiz do repositório: idioma padrão
 > (sempre português) e cuidados gerais válidos pra qualquer impressora deste Pi
@@ -138,10 +138,59 @@ upload de arquivo novo funcionando normalmente (log do Moonraker sem erro, `201`
   arquivo específico travando o escaneamento (nesse caso, renomear esse arquivo removendo
   caracteres especiais costuma resolver).
 
+## Migração para CAN: D5 como ponte USB-CAN + EBB36 v1.2 (2026-10-24)
+
+Objetivo: usar a cabeça A4T com a placa **BTT EBB36 v1.2** (STM32G0B1) por CAN. O Pi não tem
+CAN, então a **D5 virou ponte USB-CAN** e criou uma segunda rede CAN no Pi, independente da
+da Trident (`can0`). Nada da Trident foi alterado.
+
+### O que foi feito
+- **D5:** já tinha Katapult (bootloader). Entrou nele com `flashtool.py -r` e recebeu o
+  firmware de ponte: STM32F072, bootloader 8KiB, cristal 8 MHz, "USB to CAN bus bridge
+  (USB on PA11/PA12)", CAN em PB8/PB9, 1000000. Compilado com `KCONFIG_CONFIG=config.d5`
+  em `~/klipper` e gravado com `flashtool.py -f out/klipper.bin -d /dev/serial/by-id/usb-katapult_...`.
+- **EBB36 v1.2 (placa nova):** Katapult compilado (`~/katapult/config.ebb36`: G0B1, offset
+  8KiB, cristal 8 MHz, CAN PB0/PB1, 1000000) e gravado por **DFU** (`dfu-util ... 0x08000000:force:mass-erase:leave`,
+  jumper VUSB, BOOT+RESET; precisou de `sudo`). Depois o Klipper (`~/klipper/config.ebb36`,
+  mesmos parâmetros) foi gravado **por CAN**: `flashtool.py -i can_ender -u a961f4b5f8c1 -f ~/firmware-backup/klipper_EBB36.bin`.
+- **Rede no Pi:** a D5 aparece como `gs_usb` `1d50:606f`, serial USB `450049000757465036383420`.
+  Regra `/etc/udev/rules.d/70-can-ender.rules` renomeia para `can_ender`, configura bitrate
+  1000000 e sobe a interface a cada reconexão. A Trident segue em `can0` (serial
+  `3E001B001353303650373120`).
+- **UUIDs CAN:** D5 `cb9f5f3a6f91`, EBB36 `a961f4b5f8c1`
+  (`~/klippy-env/bin/python ~/klipper/scripts/canbus_query.py can_ender`).
+- **`printer.cfg`:** `[mcu]` agora usa `canbus_uuid`/`canbus_interface: can_ender`; novo
+  `[mcu EBBCan]`; `[temperature_sensor EBB36_mcu]`; o termistor do `[extruder]` passou
+  para `sensor_pin: EBBCan:PA3` (o aquecedor ainda sai pela D5, `HEAT0`).
+- Binários e backups: `~/firmware-backup/` (`klipper_D5_bridge.bin`, `klipper_EBB36.bin`, `katapult_EBB36.bin`).
+
+### Armadilhas encontradas
+- No menuconfig do Klipper/Katapult para a G0B1, o CAN é `STM32_MMENU_CANBUS_PB0_PB1`
+  ("Communication interface"). `STM32_CMENU_...` é o menu secundário (ponte) e foi ignorado:
+  a primeira compilação saiu com USB sem avisar. Sempre conferir o `.config` resultante.
+- `ifupdown` (`allow-hotplug`) deixava a interface DOWN quando a D5 reconectava
+  (`already configured`). Resolvido com a regra udev acima (sem arquivo em `interfaces.d`).
+- `dfu-util` sem root dá `LIBUSB_ERROR_ACCESS`; o erro `Error during download get_status`
+  depois do `leave` é normal.
+- Ao ligar o `printer.cfg` novo, o Klipper desligou com `MCU 'mcu' shutdown: ADC out of range`:
+  o termistor do hotend antigo (`HEAT0_TEMP` na D5) estava desconectado. Por isso o sensor
+  foi movido para a EBB36 (PA3). Também apareceu `Failed to verify BLTouch probe is raised`
+  (conferir se o BLTouch está ligado).
+
+### Pendências
+1. Ligar o termistor do hotend na EBB36 (TH0/PA3) e confirmar o tipo real (hoje `EPCOS 100K B57560G104F`, provisório) — sem isso a Ender não sobe.
+2. Conferir o BLTouch (`PB4`/`PB5` da D5) depois do restart.
+3. Migrar o resto para a EBB36 quando for ligado: aquecedor `EBBCan:PB13`, motor do extrusor
+   (`PD0` step, `!PD1` dir, `!PD2` enable, TMC2209 UART `PA15`), ventilador de peça `PA0`,
+   ventilador do hotend `PA1`.
+4. Reboot de teste do Pi (com a Trident parada) para confirmar `can0` (Trident) e
+   `can_ender` (Ender) estáveis.
+5. Terminação de 120 Ω: confirmar jumper na EBB36 e se a D5 tem a dela.
+
 ## Dicas úteis pra próxima sessão
 
-- Sempre `git pull --rebase origin main` antes de editar (cron de backup pode ter
-  avançado o remoto).
+- Mudanças de config são feitas direto no Pi por SSH (ver `CLAUDE.md`); o cron de backup
+  traz pro repositório. Se editar no clone local, rodar `git pull --rebase origin main` antes.
 - `mainsail.cfg` aqui é symlink real no Pi — aparece no repo só como texto do caminho
   (`/home/biqu/mainsail-config/mainsail.cfg`), não adianta editar aqui.
 - Bed mesh, PID (extrusora e mesa) e z_offset do BLTouch já estão calibrados e salvos no
