@@ -5,3 +5,6 @@
 # Backups automaticos que o Klipper cria a cada SAVE_CONFIG
 # (ex: printer-20260808_171602.cfg)
 **/printer-????????_??????.cfg
+
+# Copia de seguranca que o Moonraker gera do moonraker.conf
+**/.moonraker.conf.bkp

@@ -2,7 +2,7 @@
 
 > Documento de contexto para futuras sessões. Resume o que foi diagnosticado e corrigido,
 > o que ficou pendente, e armadilhas conhecidas desse setup específico.
-> Última atualização: sessão de 2026-10-07 (itens 39-41: automap, bypass, tap da Eddy, shaper).
+> Última atualização: sessão de 2026-10-24 (item 43: nomes fixos das interfaces CAN; item 42 de 2026-10-20: malha/estrutura).
 >
 > Ver também [`CLAUDE.md`](../CLAUDE.md) na raiz do repositório: idioma padrão
 > (sempre português) e cuidados gerais válidos pra qualquer impressora deste Pi
@@ -1237,7 +1237,39 @@ Pi/CAN/Moonraker/Happy Hare). **Encoder Binky foi removido em 12/09 e o FlowGuar
   preenchimento/parede" está em 15% (Processo > Resistência) — a doc só recomenda 10-15% e ela
   vale para preenchimento esparso, talvez nem alcance o piso sólido. Pedir foto de perto da borda.
 
-### 42. Trident parou depois de reiniciar o Pi: nome da interface CAN (2026-10-24)
+### 42. Queda nos cantos da malha: era mais estrutura do que mesa ou sensor (2026-10-20)
+**Sintoma:** malha 20x20 com alcance de 0,445 mm (mín -0,358, máx +0,087). Cantos frontais e
+traseiro direito ~0,3 mm abaixo do centro.
+**Análise da malha salva (printer.cfg):** plano ajustado só 0,14 mm em X e 0,09 mm em Y, o resto
+era formato de bacia/sela. NÃO era efeito de borda da Eddy: o canto traseiro esquerdo (X10)
+ficava em +0,07, enquanto uma borda de chapa derrubaria os dois lados (e mais o esquerdo, a
+sonda fica a 10 mm da borda contra 15 mm do direito). A queda era gradual (60-90 mm), não
+concentrada nos últimos 10-20 mm. Só o traseiro direito (últimos passos em Y) e o frontal
+direito (último passo em X) tinham degrau mais íngreme: talvez 0,05-0,1 mm de artefato.
+**Hipótese confirmada na prática:** a régua mostrou a mesa quase reta, então a variação da
+distância bico-mesa vinha do gantry/perfis (a Eddy mede cabeçote-mesa, não distingue). O
+`z_tilt` mede frente-esq, frente-dir e fundo-centro, então não enxerga torção nos cantos do
+fundo. Torção bate com fundo-esq alto e fundo-dir baixo.
+**O que o usuário fez:** (1) fita Kapton em camadas escalonadas sob a base magnética nos cantos
+baixos: mín foi de -0,358 para -0,143, alcance 0,411, mas o máx subiu para +0,268 (fundo-esq);
+(2) **ajustou a estrutura** (perfis/gantry): alcance **0,315 mm** (máx +0,160 em X10 Y271,2, mín
+-0,155 em X10 Y25). Os dois extremos agora estão na coluna esquerda, uma rampa suave frente
+(baixo) -> fundo (alto) de ~0,0013 mm/mm.
+**Descartado/não recomendado:** lixar a base magnética (fina demais, pó de ferrite, ela só copia
+a mesa); resina/epóxi sobre o heater (dilatação diferente, perde a placa); encolher a malha
+(o Klipper repete o valor da borda fora dela, os cantos ficam sem correção).
+**Referência de alcance (regra prática da comunidade, não é do Klipper):** até 0,2 ótimo;
+0,2-0,4 tranquilo; 0,4-0,6 conferir a primeira camada; acima de ~0,6-1,0 consertar a mecânica.
+O que importa mais que o alcance é a inclinação local (> ~0,01 mm/mm a malha de 14,5 mm não
+acompanha).
+**Pendente:** rodar `TESTE_TAP_MESA` pra confirmar tap x malha nos cantos; refazer a malha 2x
+seguidas pra medir repetibilidade (diferença > 0,03 mm = ruído); testar sem a fita Kapton (a
+régua diz que a mesa é reta, a fita pode estar sobrando agora que a estrutura foi ajustada);
+primeira camada grande cobrindo a mesa pra achar linha/degrau onde a fita termina; refazer
+tap/`z_tilt` depois do ajuste da estrutura. A malha nova não foi gravada com `SAVE_CONFIG`
+(o `PRINT_START` refaz a malha a cada impressão).
+
+### 43. Trident parou depois de reiniciar o Pi: nome da interface CAN (2026-10-24)
 
 - **Sintoma:** depois de reiniciar o Pi a Ender voltou e a Trident ficou em `startup`
   ("attempting to connect"). A rede CAN estava intacta, mas a ponte da Trident aparecia como

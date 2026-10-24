@@ -81,6 +81,44 @@ IP do Pi na rede local: **`192.168.3.17`**
   funciona de dentro do navegador embutido do OrcaSlicer):
   `http://192.168.3.17/?printer=Voron%20Trident`
 
+## Fluxo de edição: direto no Pi por SSH (preferido)
+
+Decisão do dono em 2026-10-24: **mudanças de configuração (Ender e Trident) são feitas
+direto no host, por SSH**, sem passar antes pelo git local. O cron de backup traz o
+resultado pra este repositório, e o dono depois dá `git pull` na máquina dele.
+
+- Acesso: `ssh biqu@192.168.3.17` com chave sem senha já autorizada (`C:\Users\Jakson\.ssh\id_ed25519`).
+  O `sudo` do Pi pede senha e Claude não digita senha: passos com root (arquivos em
+  `/etc`, regras udev, `systemctl`, `dfu-util`) viram um script em `/tmp` que o dono
+  executa com `sudo bash` na aba de terminal dele.
+- Onde ficam as configs: Ender em `~/printer_Ender3_data/config/`, Trident em
+  `~/printer_Trident_data/config/` (mesmos arquivos que o backup espelha em `ender3/` e `trident/`).
+- Antes de editar um arquivo no Pi, fazer uma cópia datada ao lado dele
+  (`printer-AAAAMMDD_HHMMSS.cfg`, padrão que já existe na pasta).
+- Depois de editar: `FIRMWARE_RESTART` pela API do Moonraker
+  (`curl -X POST localhost:7125/printer/firmware_restart` na Ender, `7126` na Trident) e
+  conferir `printer/info`. Só reiniciar a Trident com ela parada.
+- O `SESSION_NOTES.md` de cada impressora também existe na pasta `config/` do Pi — pode
+  ser atualizado direto lá, junto da mudança.
+- O dono autorizou também editar/commitar direto na `main` deste repositório (projeto
+  pessoal), quando a edição for mesmo aqui. O hook `branch-protection` do plugin zcode
+  pode bloquear Edit/Write na `main`; editar no Pi evita isso e é o fluxo preferido.
+
+## Redes CAN no Pi (duas, independentes)
+
+- `can_trident` = ponte da Trident (placa `stm32f072xb`, serial USB `3E001B001353303650373120`);
+  os 4 MCUs da Trident (`[mcu]`, `ebb36`, `eddy`, `unit0` do Happy Hare) têm
+  `canbus_interface: can_trident` explícito. **Nunca usar `can0`/`can1`:** são nomes do
+  kernel e mudam de ordem no boot (em 2026-10-24 a D5 pegou `can0` e a Trident parou).
+- `can_ender` = ponte da Fly D5 da Ender 3 (serial USB `450049000757465036383420`).
+- Os nomes e a subida (1000000 de bitrate, `txqueuelen 1024`, `up`) vêm da regra udev
+  `/etc/udev/rules.d/70-can-bridges.rules`, por serial USB, a cada reconexão da ponte.
+  O `ifupdown` não gerencia mais essas interfaces. Uma ponte nova precisa ganhar a regra dela.
+  Detalhes e UUIDs em [`ender3/SESSION_NOTES.md`](ender3/SESSION_NOTES.md).
+- Binários/configs de firmware: `~/firmware-backup`, `~/klipper/config.d5`,
+  `~/klipper/config.ebb36`, `~/katapult/config.ebb36` (compilar com `KCONFIG_CONFIG=` próprio
+  e nunca mexer em `~/klipper/.config`, que é compartilhado).
+
 ## Push para o git
 
 Quando o usuário pedir pra "subir os ajustes", "enviar pro git", "mandar pro repositório"

@@ -2,7 +2,7 @@
 
 > Documento de contexto para futuras sessões. Resume o que foi diagnosticado e corrigido,
 > o que ficou pendente, e armadilhas conhecidas desse setup específico.
-> Última atualização: sessão de 2026-10-24 (migração para CAN).
+> Última atualização: sessão de 2026-10-24 (CAN, EBB36, X sensorless, PID, BLTouch na EBB36).
 >
 > Ver também [`CLAUDE.md`](../CLAUDE.md) na raiz do repositório: idioma padrão
 > (sempre português) e cuidados gerais válidos pra qualquer impressora deste Pi
@@ -143,7 +143,7 @@ upload de arquivo novo funcionando normalmente (log do Moonraker sem erro, `201`
 Objetivo: usar a cabeça A4T com a placa **BTT EBB36 v1.2** (STM32G0B1) por CAN. O Pi não tem
 CAN, então a **D5 virou ponte USB-CAN** e criou uma segunda rede CAN no Pi, independente da
 da Trident. (Depois do primeiro reboot do Pi a Trident precisou passar para `can_trident`, ver
-`trident/SESSION_NOTES.md` item 42; a D5 e a Trident agora têm nomes fixos.)
+`trident/SESSION_NOTES.md` item 43; a D5 e a Trident agora têm nomes fixos.)
 
 ### O que foi feito
 - **D5:** já tinha Katapult (bootloader). Entrou nele com `flashtool.py -r` e recebeu o
@@ -183,7 +183,7 @@ da Trident. (Depois do primeiro reboot do Pi a Trident precisou passar para `can
    subiu (`Printer is ready`), extrusora lendo ~25,6 °C, mesa 26,4 °C, MCU da EBB36 ~34,6 °C,
    BLTouch sem erro. Falta confirmar o tipo real do termistor da A4T (hoje `EPCOS 100K B57560G104F`,
    provisório; comparar com a temperatura ambiente e, depois, com o aquecimento real).
-2. Migrar o resto para a EBB36 quando for ligado: aquecedor `EBBCan:PB13`, motor do extrusor
+2. ~~Migrar o resto para a EBB36~~ **Feito** (ver seção seguinte). Pinos usados: aquecedor `EBBCan:PB13`, motor do extrusor
    (`PD0` step, `!PD1` dir, `!PD2` enable, TMC2209 UART `PA15`), ventilador de peça `PA0`,
    ventilador do hotend `PA1`.
 3. ~~Reboot de teste do Pi~~ Feito em 2026-10-24 sem querer: expôs a corrida de nomes `can0`/`can1`
@@ -191,6 +191,65 @@ da Trident. (Depois do primeiro reboot do Pi a Trident precisou passar para `can
    Trident `can1` no kernel, e a regra udev renomeou as duas (`can_ender`, `can_trident`);
    as duas impressoras subiram em `Printer is ready`.
 4. Terminação de 120 Ω: confirmar jumper na EBB36 e se a D5 tem a dela.
+
+## EBB36 completa, X sensorless, PID e BLTouch na EBB36 (2026-10-24, continuação)
+
+### Tudo da cabeça na EBB36 (`printer.cfg`)
+Mesma cabeça A4T, hotend, sensor e aquecedor da Trident, então os valores vieram do
+`trident/toolhead.cfg`:
+- `[extruder]`: step `EBBCan:PD0`, dir `!EBBCan:PD1`, enable `!EBBCan:PD2`, aquecedor `EBBCan:PB13`,
+  termistor `EBBCan:PA3` tipo `NTC 100K MGB18-104F39050L32` com `pullup_resistor: 4700`,
+  `gear_ratio: 50:17`, `rotation_distance: 13.10`, `pressure_advance: 0.064` (os três herdados da
+  Trident, **recalibrar na Ender**), `max_temp: 300`, `min_extrude_temp: 170`.
+- `[tmc2209 extruder]`: UART `EBBCan:PA15`, 0,55 A, `sense_resistor: 0.110`, spreadCycle.
+- `[fan]` (peça) `EBBCan:PA1`, `[heater_fan ventoinha_hotend]` `EBBCan:PA0` (igual à fiação da Trident;
+  o exemplo da BTT inverte PA0/PA1). Conferido no teste: cada um gira na hora certa.
+- `[bltouch]`: `sensor_pin: ^EBBCan:PB8`, `control_pin: EBBCan:PB9` (porta Probe da EBB36; antes
+  `^D3_STOP`/PA8 na D5, que ficaram livres). Offsets da A4T: `x_offset: -38.7`, `y_offset: 16.6`.
+- Dependentes dos offsets, recalculados: `safe_z_home` em `156,101` (BLTouch cai em ~117,117),
+  `mesh_min: 10, 20` (Y mínimo alcançável pelo BLTouch = 16,6), `zero_reference_position: 117, 117`,
+  parafusos do `screws_tilt_adjust` em X 66,4/236,4 e Y 27,4/197,4 (mesmos parafusos físicos,
+  convertidos dos offsets antigos -45/-1).
+- **Ainda não montados pelo Jakson:** BLTouch e motor do extrusor (config pronta).
+
+### PID do hotend (EBB36)
+`PID_CALIBRATE HEATER=extruder TARGET=240`: Kp 34.385, Ki 15.282, Kd 19.342 (a Trident, mesmo hotend,
+tem 33.038/14.684/18.584). Gravado com `SAVE_CONFIG` pelo Jakson. Teste de aquecimento: 25 -> 61 °C em ~10 s.
+
+### X sensorless (TMC2209 + DIAG)
+- Config: `endstop_pin: tmc2209_stepper_x:virtual_endstop`, `diag_pin: ^D0_STOP` (PB4 = XSTOP),
+  `homing_speed: 20` (= rotation_distance/2, recomendação do Klipper), `homing_retract_dist: 0`,
+  `driver_SGTHRS: 53`.
+- Macro `G28` (rename para `G28.1`) + `_HOME_X`: homing do X com **0,5 A** (`variable_home_cur`),
+  `G4 P2000` antes, afasta 5 mm depois e volta pra corrente normal (0,7 A). Y e Z seguem o G28 normal.
+- **Calibração** (procedimento do Klipper, carro no centro, 0,5 A, 20 mm/s): SGTHRS 255..70 para cedo;
+  60 = primeiro que chega no batente (máximo); abaixo de ~50 estala/perde passo (observado pelo
+  Jakson). Final 53. **Se mudar corrente de homing ou velocidade, recalibrar.**
+- `[force_move] enable_force_move: True` adicionado (como na Trident), usado pros testes sem batente.
+
+### Armadilhas do sensorless (custaram horas)
+1. **O módulo TMC2209 não tinha os 2 pinos DIAG soldados.** O driver Fly tem 2 pinos extras no meio da
+   ponta que entram em 2 furos do encaixe da D5; o jumper DIAG (par vertical ao lado do capacitor de
+   100 µF, junto à coluna azul) liga esses furos ao XSTOP. Sem os pinos, o chip sobe o DIAG
+   (`DUMP_TMC REGISTER=IOIN` mostra `diag=1`) mas o sinal não sai do módulo. Sintoma: o X lia
+   `TRIGGERED` sempre em repouso (a D5 tem pull-up no XSTOP) e o homing nunca parava. Solução: soldar
+   a barra de 2 pinos. Teste sem bater: andar 5 mm, deixar `SGTHRS=255` + `TCOOLTHRS=0xFFFFF` (DIAG fica
+   em 1 parado) e ver `QUERY_ENDSTOPS` mudar entre `TRIGGERED` e `open`.
+2. **`[safe_z_home] z_hop`**: com o Z não homado, TODO `G28` (até `G28 X`) zera o Z e sobe `z_hop` mm.
+   Testes repetidos subiram o Z ~80 mm. Ficou `z_hop: 0` durante os testes e voltou a 10 com o BLTouch
+   na config.
+3. Inverter o `diag_pin` (`^!`) não resolve falta de sinal: leitura parada não prova polaridade.
+4. Drivers com pinos DIAG soldados mas sem uso: sem jumper DIAG na placa não fazem nada. **Nunca pôr
+   jumper DIAG no D3**: o `D3_STOP` (PB5) era o sinal do BLTouch (hoje livre, mas fica a regra) e com
+   jumper o fim de curso correspondente tem que ficar vazio.
+
+### Pendências
+1. Montar o BLTouch na EBB36 (PB8/PB9) e rodar `PROBE_CALIBRATE` + `SAVE_CONFIG`: o `z_offset: 1.830`
+   salvo é do BLTouch antigo. **Não imprimir antes disso.**
+2. Refazer a malha (`BED_MESH_CALIBRATE` + `SAVE_CONFIG`): a salva foi feita com os offsets antigos.
+3. Ligar o motor do extrusor na EBB36, conferir sentido e calibrar `rotation_distance` (herdado 13.10).
+4. Calibrar pressure advance na Ender (herdado 0.064).
+5. Opcional: remover `[force_move]` depois que tudo estiver calibrado.
 
 ## Dicas úteis pra próxima sessão
 
