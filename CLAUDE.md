@@ -119,6 +119,13 @@ resultado pra este repositório, e o dono depois dá `git pull` na máquina dele
   `~/klipper/config.ebb36`, `~/katapult/config.ebb36` (compilar com `KCONFIG_CONFIG=` próprio
   e nunca mexer em `~/klipper/.config`, que é compartilhado).
 
+## Navegador: usar o Chrome do dono
+
+Pra abrir sites (pesquisa, Printables/Thingiverse, docs, Mainsail etc.), **usar o navegador
+Chrome do dono pela extensão Claude in Chrome** (ferramentas `mcp__claude-in-chrome__*`), não o
+navegador embutido do app. No Chrome dele os sites não bloqueiam e ele acompanha o que está sendo
+aberto. Pedido do dono em 2026-10-27.
+
 ## Push para o git
 
 Quando o usuário pedir pra "subir os ajustes", "enviar pro git", "mandar pro repositório"
