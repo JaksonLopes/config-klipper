@@ -259,3 +259,34 @@ tem 33.038/14.684/18.584). Gravado com `SAVE_CONFIG` pelo Jakson. Teste de aquec
   (`/home/biqu/mainsail-config/mainsail.cfg`), não adianta editar aqui.
 - Bed mesh, PID (extrusora e mesa) e z_offset do BLTouch já estão calibrados e salvos no
   bloco `SAVE_CONFIG` do `printer.cfg` — não foram tocados nesta sessão.
+
+
+### 6. Bico oscilando ±1,5 °C: PID automático agressivo demais p/ hotend Bambu (2026-11-14)
+Sintoma (Ender e Trident, mesmo kit de hotend Bambu + termistor `NTC 100K MGB18-104F39050L32`):
+temperatura do bico balançando 228↔232 em 230, num ritmo fixo de ~3 s, potência indo de 0 a 100%.
+Não era sensor errado: as duas máquinas deram PID quase igual (Ender 34,4/15,3/19,3; Trident
+33,0/14,7/18,6) e o mesmo período de oscilação (~4,5 s pelas fórmulas do Klipper).
+- **Causa:** o `PID_CALIBRATE` do Klipper (Ziegler-Nichols) é agressivo demais pra esse hotend
+  rápido e de pouca massa (Ki alto). Acerta a média mas deixa o bico oscilando. **Rodar
+  `PID_CALIBRATE` de novo dá os mesmos valores** — não adianta.
+- **Solução: PID manual, mais suave** (medido a 230 °C, ventoinha da peça ~30%, 150 s):
+  | PID (Kp/Ki/Kd) | desvio | min-max |
+  |---|---|---|
+  | 34,4 / 15,3 / 19,3 (automático) | 1,16 °C | 229,3–233,0 |
+  | 25 / 2,5 / 18 (Tyreus-Luyben) | 0,43 °C | 228,8–231,5 |
+  | **18 / 1,5 / 10 (aplicado)** | **0,23 °C** | **229,7–230,8** |
+  Menos `Kd` reduz o chatter de leitura do sensor; menos `Ki` tira o balanço.
+- **Aplicado** em `printer.cfg`, no bloco `#*# [extruder]` do SAVE_CONFIG (`pid_kp/ki/kd`).
+  Backup: `printer-20261115_004850.cfg`. Esta versão do Klipper **não tem `SET_HEATER_PID`**: trocar o PID
+  exige editar esses 3 valores e `FIRMWARE_RESTART`.
+- ⚠️ **Se alguém rodar `PID_CALIBRATE HEATER=extruder` + `SAVE_CONFIG`, os valores voltam aos
+  agressivos** — reaplicar 18/1,5/10 à mão. Idem se o hotend for trocado: refazer o teste.
+- **Como testar um PID novo:** editar os 3 valores, reiniciar, `M106 S77` + `M104 S230`, esperar
+  estabilizar ~1 min (basta) e olhar `/server/temperature_store` (campos `temperatures` e `powers`):
+  desvio e se a potência fica "lisa" em vez de 0↔100%. Ku ≈ Kp/0,6 e Tu ≈ 2·Kp/Ki dão a base
+  das contas (aqui Ku≈57, Tu≈4,5 s).
+- **Sob extrusão:** ao extrudar a Ender caiu ~2 °C (230→228) e voltou em ~10 s, com a potência subindo só
+  de ~40%% para ~50%% (sobra folga no aquecedor). Considerado normal; não medido em fluxo alto.
+- **A verificar numa impressão real:** PID mais suave reage mais devagar a perturbações (ventoinha
+  ligando, fluxo alto). Se o bico cair muito ao abrir a ventoinha, subir um pouco o `Kp`.
+- Pendente (Trident): mesmo teste quando terminar a impressão; ver item 46 do `SESSION_NOTES.md` dela.

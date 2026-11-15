@@ -1321,6 +1321,21 @@ Pedido do dono, igual à Kobra X: medir só em volta da impressão.
   à malha toda (tirar `ADAPTIVE=1`).
 - Backups: `macros-<data>.cfg`, `bed_leveling-<data>.cfg`. Não reiniciado (impressão em curso).
 
+### 46. Bico oscilando ±1,5 °C: PID manual mais suave (APLICADO) (2026-11-14)
+Medido na Trident durante impressão (230 °C): desvio 1,04 °C, 228,4–232,4, ciclo de ~3 s com
+potência 0↔100%. **Mesmo problema da Ender** (mesmo hotend Bambu): PID automático
+(`33,0 / 14,7 / 18,6`) é agressivo demais; `PID_CALIBRATE` de novo dá o mesmo resultado.
+- Na Ender o PID manual **`Kp 18 / Ki 1,5 / Kd 10`** baixou o desvio de 1,16 para **0,23 °C**
+  (detalhes, tabela e procedimento de teste em `ender3/SESSION_NOTES.md`, item "Bico oscilando").
+- **RESULTADO (Trident parada, 230 °C, ventoinha ~30%, 150 s):** `18 / 1,5 / 10` deu desvio **0,09 °C**
+  (229,8–230,3, potência lisa ~38%) contra 1,04 °C do automático. **Aplicado** no bloco `#*# [extruder]`
+  do `printer.cfg`; backup `printer-20261115_004955.cfg`; Klipper reiniciado com os valores novos.
+  Ainda a ver numa impressão real: queda sob fluxo alto (na Ender ~2 °C, voltando em ~10 s).
+- (Procedimento usado, só pra referência) **a fazer com a Trident parada:** editar `pid_kp/pid_ki/pid_kd` no bloco `#*# [extruder]` do
+  `printer.cfg` (backup antes), `FIRMWARE_RESTART`, medir a 230 °C com `M106 S77`, e conferir
+  se a potência fica lisa. Esta versão do Klipper **não tem `SET_HEATER_PID`**.
+- ⚠️ Um `PID_CALIBRATE` + `SAVE_CONFIG` do extrusor sobrescreve os valores manuais.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
