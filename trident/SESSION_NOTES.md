@@ -1374,6 +1374,30 @@ limpeza na escova (vários segundos) acontece com o bico quente e pressurizado, 
   linha sairia falhada. A ventoinha anterior é restaurada (não deixa ligada na 1ª camada de PETG
   nem apaga a da peça numa troca de cor no meio da impressão).
 - Backup: `macros-20261115_014126.cfg`. Klipper reiniciado, variáveis conferidas. **Não testado com carga real.**
+- **Teste feito (2026-11-15 01:45, G28 + bico 240 °C + `MMU_LOAD` gate 2):** carga OK (1184,5 mm), purga extra de 15 mm +
+  purga HH de 47 mm (fragmento restante contado do corte antigo), ventoinha ligou a 100%% por 5,3 s e voltou a 0.
+  Sequência nova rodou sem erro. Aviso visto uma vez, 13 s depois da carga: `Happy Hare Assertion: Insert handler
+  suspects sensor malfunction on default:extruder ... Ignored` (primeira vez nos logs mmu.log; Ignored, sem efeito;
+  acompanhar se repete). Falta o veredito visual do dono (bico seco ou não) e testar o corte (`MMU_UNLOAD`).
+- **BUG achado no 1º teste (o dono viu: só ~15 mm purgados, verde ficou no bico):** a `_MMU_PURGE` do Happy Hare
+  (`__MMU_PURGE_SEGMENT`: `G1 E2.0` repetido) **não força extrusão relativa**; só o M83 do Orca (dentro de impressão)
+  a deixava certa. Depois de um `FIRMWARE_RESTART` o Klipper volta pra **absoluta (M82)** e, num `MMU_LOAD` avulso,
+  cada `G1 E2.0` vira "vá para E=2.0": quase nada era purgado (sobraram só os 15 mm da purga extra, que usavam M83 + RESTORE_GCODE_STATE
+  que devolvia o modo absoluto). Corrigido em `_MMU_PURGE_CUSTOM` (backup `macros-%s.cfg`): `M83` forçado antes da
+  purga, sem SAVE/RESTORE, e o modo anterior (M82) é restaurado no fim da macro.
+- **Valores novos:** `extra_purge_mm` 15→**40** (num `MMU_LOAD` avulso: 40 + o fragmento restante ≈ 47 = ~87 mm; fora de
+  prints o HH só soma o volume do fragmento, sem o do fatiador), `post_purge_retract_mm` 2→**3**, `post_purge_dwell_s` 3→**5**
+  (ainda escorreu "pouco" no 1º teste).
+- **Verificação (2º teste, `G28` + 240 °C + `MMU_TEST_PURGE`):** macro rodou em 23 s (coerente com 40 mm a 3 mm/s + 5 s de espera +
+  limpeza), ventoinha 100%% por 6,8 s, modo absoluto restaurado. `extruder.commanded_pos` ficou parado em 0,0 durante a purga
+  (não entendi por que; a duração sugere que extrudou) — conferir visualmente. Obs.: `Purging 0.0mm` do HH aí é esperado
+  (sem fragmento e sem volume do fatiador depois de carregado).
+- **3º teste: `extra_purge_mm` 40→100** (ainda sobrava resquício de verde com 40). Medido pela velocidade do extrusor
+  (`motion_report.live_extruder_velocity`, integrada): **~99 mm** em 43 s, ventoinha 100%% por 6,8 s. O `extruder.commanded_pos`
+  do status fica em 0,0 e **não serve** pra medir isso. Backup: `macros-%s.cfg`.
+- ⚠️ Em impressão multicor o `_MMU_PURGE_CUSTOM` roda em **toda** troca (`force_purge_standalone: 1`): 100 mm extras + volume
+  do fatiador + fragmento = muito filamento e ~33 s a mais por troca. Depois de achar o suficiente pra tirar a cor anterior,
+  reduzir `extra_purge_mm` (ou subir a velocidade de purga, `extruder_purge_speed: 3`; a 5 mm/s o extrusor pulou passo, item 21).
 - **A testar (usuário):** `MMU_LOAD`/início de impressão e olhar o bico saindo do balde. Se ainda
   escorrer: subir `post_purge_retract_mm` (3) ou `post_purge_dwell_s` (5–6); se a 1ª linha sair
   falhada, baixar a retração.
