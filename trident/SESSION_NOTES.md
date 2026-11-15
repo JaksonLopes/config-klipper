@@ -1291,6 +1291,36 @@ tap/`z_tilt` depois do ajuste da estrutura. A malha nova não foi gravada com `S
   de uma linha própria na regra udev. Se atualizar o Happy Hare, conferir que o `unit0` manteve
   `canbus_interface: can_trident`.
 
+### 44. Fiapos de PETG: malha da mesa passou a ser feita com o bico a 150 °C (2026-11-14)
+Comparando com a Anycubic Kobra X (mesmo PETG, sem fiapos): ela aquece o bico só a 150 °C,
+limpa, mede a mesa e só depois carrega/aquece. Na Trident a malha rodava com o bico já a
+temperatura de impressão (~230 °C), escorrendo PETG o tempo todo.
+- `PRINT_START` (`macros.cfg`) reordenado: tap a 150 °C → `BED_MESH_CALIBRATE rapid_scan`
+  (ainda a 150 °C) → vai ao balde, aquece até `EXTRUDER` → `LIMPAR_BICO`. Removido o
+  `LIMPAR_BICO` extra que ficava depois da malha.
+- Backup: `macros-20261115_001756.cfg`. Editado durante uma impressão: **não reiniciado**,
+  vale após o próximo `FIRMWARE_RESTART`.
+- ⚠️ Atenção: a nota do Bloco A dizia que a malha a frio saía com a frente da mesa alta.
+  Aquela situação tinha a mesa ainda esquentando; aqui o `M190` já espera a mesa. Se a frente
+  sair alta de novo, voltar ao backup. Também vale testar a primeira camada na primeira
+  impressão depois do restart.
+- Outras causas dos fiapos ainda a testar: temperatura real do bico (torre de temperatura),
+  retração e *wipe while retracting* no Orca, câmara quente.
+
+### 45. Malha adaptativa: só a área das peças (2026-11-14)
+Pedido do dono, igual à Kobra X: medir só em volta da impressão.
+- `PRINT_START`: `BED_MESH_CALIBRATE METHOD=rapid_scan ADAPTIVE=1`. `[bed_mesh]` ganhou
+  `adaptive_margin: 5` (bed_leveling.cfg). Usa os polígonos do `EXCLUDE_OBJECT_DEFINE`
+  (o Orca já emite antes do `PRINT_START`, com "rotular objetos" ligado). Sem objetos rotulados,
+  o Klipper faz a malha toda sozinho.
+- O `zero_reference_position: 150, 125` fica fora da área quando a peça não cobre esse ponto:
+  o Klipper entra em modo PROBE e acrescenta 1 ponto de scan ali (comportamento normal, o
+  rapid_scan suporta). A referência de Z continua sendo o tap do bico em 150,125.
+- A torre de purga do MMU não entra nos polígonos: fora da área da malha o Klipper usa o valor
+  da borda da malha. Se a torre sair com a 1ª camada ruim, aumentar `adaptive_margin` ou voltar
+  à malha toda (tirar `ADAPTIVE=1`).
+- Backups: `macros-<data>.cfg`, `bed_leveling-<data>.cfg`. Não reiniciado (impressão em curso).
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
