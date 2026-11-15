@@ -285,8 +285,9 @@ Não era sensor errado: as duas máquinas deram PID quase igual (Ender 34,4/15,3
   estabilizar ~1 min (basta) e olhar `/server/temperature_store` (campos `temperatures` e `powers`):
   desvio e se a potência fica "lisa" em vez de 0↔100%. Ku ≈ Kp/0,6 e Tu ≈ 2·Kp/Ki dão a base
   das contas (aqui Ku≈57, Tu≈4,5 s).
-- **Sob extrusão:** ao extrudar a Ender caiu ~2 °C (230→228) e voltou em ~10 s, com a potência subindo só
-  de ~40%% para ~50%% (sobra folga no aquecedor). Considerado normal; não medido em fluxo alto.
+- **Sob extrusão (medido, PID 18/1,5/10, extrudando no ar a 230 °C):** 8 mm³/s → queda 0,9 °C, potência 46%; 12 mm³/s →
+  queda 1,1 °C, 53%; 16 mm³/s → queda 1,5 °C, 57% (pico 62%). Volta a ≥229,5 °C em 7–12 s depois de parar.
+  Sobra muita folga no aquecedor; não precisa mexer no PID. Só testado até 16 mm³/s.
 - **A verificar numa impressão real:** PID mais suave reage mais devagar a perturbações (ventoinha
   ligando, fluxo alto). Se o bico cair muito ao abrir a ventoinha, subir um pouco o `Kp`.
 - Pendente (Trident): mesmo teste quando terminar a impressão; ver item 46 do `SESSION_NOTES.md` dela.
