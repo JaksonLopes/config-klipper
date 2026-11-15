@@ -1336,6 +1336,48 @@ potência 0↔100%. **Mesmo problema da Ender** (mesmo hotend Bambu): PID autom�
   se a potência fica lisa. Esta versão do Klipper **não tem `SET_HEATER_PID`**.
 - ⚠️ Um `PID_CALIBRATE` + `SAVE_CONFIG` do extrusor sobrescreve os valores manuais.
 
+### 47. Fiapo de 8–10 cm escorrendo do bico depois do corte no fim da impressão (2026-11-14)
+Fluxo no fim da impressão: `machine_end_gcode = MMU_END` + `PRINT_END`; `MMU_END` tem
+`unload_tool: True`, então **corta e descarrega com o bico ainda quente** (o `M104 S0` do
+`PRINT_END` só vem depois). Isso deixa o PETG derretido escorrendo durante todo o corte/descarga.
+- **Achado (macro `_MMU_CUT_TIP`, `~/Happy-Hare/config/macros/mmu_cut_tip.cfg`, não modificada):**
+  o passo 3 "pushback" faz `G1 E{pushback}` (empurra o fragmento 15 mm pra dentro do hotend quente),
+  dwell, e `G1 E-{pushback}` (puxa de volta). **Saldo zero** — não deixa nada empurrado, só um vai-e-volta
+  com PETG derretido, que arrasta fio do bico. Na v3 o `pushback_length` era `0` (a nota do item 23
+  já marcava essa diferença v3→v4 como "achado secundário").
+- **Mudanças** (backups `macros-20261115_013458.cfg` e `mmu/base/mmu_macro_vars-20261115_013458.cfg.bak`):
+  1. `variable_pushback_length` `15.0 → 0` (desliga o vai-e-volta; volta ao comportamento da v3).
+  2. `variable_retract_length` `20 → 30` (a doc do HH sugere `blade_pos - 5` = 62 como teto; `blade_pos` 67).
+     Retrai 25 mm no corte (30 menos os 5 mm do park). Fragmento que sobra: 67-30 = 37 mm (era 47).
+  3. `macros.cfg` → `_MMU_PURGE_CUSTOM`: nova `variable_extra_purge_mm: 15` — purga 15 mm **a mais**
+     no balde antes da purga normal do HH (`force_purge_standalone: 1` → roda em toda carga e
+     troca de ferramenta). `0` desliga. Velocidade = `extruder_purge_speed` (3 mm/s).
+  Klipper reiniciado e os valores conferidos em `printer.objects`.
+- ⚠️ `mmu_macro_vars.cfg` é sobrescrito pelo instalador do Happy Hare a cada atualização: se o
+  `pushback_length`/`retract_length` voltarem a 15/20 depois de atualizar, reaplicar.
+- **A testar (usuário):** um `MMU_UNLOAD` / fim de impressão e ver o tamanho do fiapo; depois
+  `MMU_LOAD`/primeira carga e ver se não trava no corte (se travar na carga: `retract_length` volta
+  pra ~25). Se ainda escorrer, próximo passo é **esfriar o bico logo após o corte** (ex.: usar
+  `user_print_end_extension` ou `_MMU_POST_FORM_TIP` pra baixar a temperatura), não testado.
+
+### 48. Bico começava a impressão escorrendo: retração + ventoinha depois da purga (2026-11-14)
+A Cobra X liga a ventoinha e chega ao começo da impressão com o bico seco; a Trident chegava com
+um pouco de plástico saindo. Causa provável: a purga (3 mm/s) deixa o bico com **pressão**, e a
+limpeza na escova (vários segundos) acontece com o bico quente e pressurizado, escorrendo.
+- `macros.cfg` → `_MMU_PURGE_CUSTOM` (roda em toda carga e troca, `force_purge_standalone: 1`).
+  Novo passo 4, depois de `_MMU_PURGE`: retrai → liga a ventoinha da peça → espera sobre o balde →
+  `LIMPAR_BICO` → desfaz a retração → restaura a ventoinha anterior.
+  Variáveis (no topo da macro): `post_purge_retract_mm: 2.0`, `post_purge_fan: 1.0`,
+  `post_purge_dwell_s: 3`. Qualquer uma em `0` desliga aquela parte.
+- **Retração com saldo zero de propósito:** o Orca assume que o filamento está "sem retração" no
+  início e já retrai/desretrai sozinho na primeira viagem; se eu deixasse retraído, a primeira
+  linha sairia falhada. A ventoinha anterior é restaurada (não deixa ligada na 1ª camada de PETG
+  nem apaga a da peça numa troca de cor no meio da impressão).
+- Backup: `macros-20261115_014126.cfg`. Klipper reiniciado, variáveis conferidas. **Não testado com carga real.**
+- **A testar (usuário):** `MMU_LOAD`/início de impressão e olhar o bico saindo do balde. Se ainda
+  escorrer: subir `post_purge_retract_mm` (3) ou `post_purge_dwell_s` (5–6); se a 1ª linha sair
+  falhada, baixar a retração.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
