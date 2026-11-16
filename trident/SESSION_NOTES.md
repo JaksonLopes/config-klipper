@@ -1416,6 +1416,23 @@ Dono vai trocar de placa com frequência; a pergunta era se a tabela da Eddy (fe
   Pendente: veredito da 1ª camada na placa nova. O `tap_z_offset` ativo é **-0,05** (o item 40 dizia -0,09 ajustado no Pi):
   conferir qual vale ao julgar a 1ª camada. Ao trocar por uma placa bem diferente (vidro, espessura outra), rodar o teste de novo.
 
+### 50. Área útil real da chapa e zona proibida do cortador, pro OrcaSlicer (2026-11-16)
+O "Cubo" de teste (quadrado quase do tamanho da mesa) saiu deslocado pra trás, com borda sobrando na frente, e o bico **bateu na alavanca do
+cortador** de filamento (quase quebrou). Causa: o perfil do Orca (`Voron Trident  MMX`, herda `Voron Trident default`) tem mesa de
+`0x0 → 300x300`, mas a chapa nova mede menos que isso no sistema de coordenadas do Klipper. O G-code do Cubo tinha a 1ª camada em
+X/Y **5,3 a 294,7**: 2,7 mm pra fora da borda de trás (Y 292) e, no canto traseiro esquerdo, dentro da zona do cortador.
+- **Medido pelo dono com o bico (borda física da chapa PEI, em coordenadas do Klipper):** frente esquerda X1 Y1; frente direita X298 Y1;
+  traseira direita X298 Y292; traseira esquerda X1 Y291 (≈ 297 × 291 mm úteis).
+- **Zona proibida no canto traseiro esquerdo (alavanca do cortador, sobra de Y 286 até o fim da mesa):** com Y ≥ 286 o bico não pode ir
+  abaixo de X 9 (de Y 286 pra baixo pode chegar em X 1). A macro `_MMU_CUT_TIP` entra nessa zona de propósito (`pin_loc_xy: 3, 286`);
+  numa impressão normal nada pode ficar lá.
+- **Ajuste no OrcaSlicer (Configurações da impressora → Informações básicas), não no Klipper:**
+  - Área de impressão: tamanho **297 × 291**, origem **1, 1** (pontos 1x1, 298x1, 298x292, 1x292).
+  - Área de exclusão da mesa (retângulo): origem **0, 285**, tamanho **10 × 7** (com 1 mm de folga sobre os 9/286 medidos).
+  - Klipper fica como está (`position_max` X 300 / Y 311 são necessários pro cortador e pros baldes do Decontaminator atrás da mesa).
+- Limite: a exclusão do Orca só impede de **colocar objeto** na zona; skirt/brim e movimentos de viagem não são checados por ela.
+- Pendente: o dono aplicar no Orca e refazer o teste do Cubo; conferir se agora as bordas ficam equilibradas.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
