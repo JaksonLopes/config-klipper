@@ -1402,6 +1402,20 @@ limpeza na escova (vários segundos) acontece com o bico quente e pressurizado, 
   escorrer: subir `post_purge_retract_mm` (3) ou `post_purge_dwell_s` (5–6); se a 1ª linha sair
   falhada, baixar a retração.
 
+### 49. Placa nova (Phaetus Cobweb/POPweb Cool Plate): tap + malha conferem sem recalibrar a Eddy (2026-11-16)
+Dono vai trocar de placa com frequência; a pergunta era se a tabela da Eddy (feita na placa antiga) continua valendo.
+- Resposta: o `AJUSTAR_Z_TAP` do `PRINT_START` já rezera o Z pelo contato real do bico em toda impressão, então o zero de Z
+  acompanha qualquer placa. A tabela da Eddy só afeta o relevo da malha.
+- Teste: mesa 60 °C, bico 150 °C limpo, 4 min de espera, `TESTE_TAP_MESA` (malha `rapid_scan` NOVA + tap em 9 pontos).
+  Primeira correção do `AJUSTAR_Z_TAP`: só +0,006 mm.
+- Diferença malha - tap: X30Y10 -0,004; X150Y10 -0,029; X270Y10 +0,024; X30Y125 +0,005; X270Y125 -0,005; X30Y260 +0,009;
+  X150Y260 0,000; X270Y260 -0,015. Os maiores (Y10) estão fora da área da malha (`min_y` 25), sem tendência de sinal.
+  Relevo da mesa (~0,28 mm, frente baixa e fundo-direita alto) parecido com a malha salva da placa antiga.
+- Conclusão: **sem recalibração da Eddy.** A malha do teste ficou só na RAM (sem `SAVE_CONFIG`).
+- Limites: um teste só, a 60 °C. Se imprimir PETG com mesa mais quente, repetir `TESTE_TAP_MESA` nessa temperatura.
+  Pendente: veredito da 1ª camada na placa nova. O `tap_z_offset` ativo é **-0,05** (o item 40 dizia -0,09 ajustado no Pi):
+  conferir qual vale ao julgar a 1ª camada. Ao trocar por uma placa bem diferente (vidro, espessura outra), rodar o teste de novo.
+
 ## Checklist de pendências pro usuário confirmar
 
 - [ ] Trocar ordem do End G-code no OrcaSlicer para `MMU_END` antes de `PRINT_END`
